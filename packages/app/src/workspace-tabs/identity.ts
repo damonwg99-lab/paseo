@@ -36,6 +36,10 @@ export function normalizeWorkspaceTabTarget(
     const workspaceId = trimNonEmpty(value.workspaceId);
     return workspaceId ? { kind: "setup", workspaceId } : null;
   }
+  if (value.kind === "task") {
+    const taskId = trimNonEmpty(value.taskId);
+    return taskId ? { kind: "task", taskId } : null;
+  }
   return null;
 }
 
@@ -88,6 +92,9 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
   }
+  if (left.kind === "task" && right.kind === "task") {
+    return left.taskId === right.taskId;
+  }
   return false;
 }
 
@@ -139,6 +146,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "setup") {
     return `setup_${target.workspaceId}`;
+  }
+  if (target.kind === "task") {
+    return `task_${target.taskId}`;
   }
   return `file_${target.path}`;
 }

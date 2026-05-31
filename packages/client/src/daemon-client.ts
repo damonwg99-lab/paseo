@@ -4244,6 +4244,179 @@ export class DaemonClient {
   }
 
   // ============================================================================
+  // Dev Platform RPCs
+  // ============================================================================
+
+  async devProjectCreate(options: {
+    requestId?: string;
+    name: string;
+    description?: string;
+    gitRepos?: unknown[];
+    zentaoProjectId?: string;
+    uatBranch?: string;
+    prdBranch?: string;
+    cicdConfig?: unknown;
+  }): Promise<{ project: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.project.create", ...options },
+      responseType: "dev.project.create/response",
+      timeout: 10000,
+    });
+  }
+
+  async devProjectList(requestId?: string): Promise<{ projects: unknown[]; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.project.list" },
+      responseType: "dev.project.list/response",
+      timeout: 10000,
+    });
+  }
+
+  async devProjectInspect(
+    projectId: string,
+    requestId?: string,
+  ): Promise<{ project: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.project.inspect", projectId },
+      responseType: "dev.project.inspect/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskCreate(options: {
+    requestId?: string;
+    projectId: string;
+    taskType: string;
+    title: string;
+    description?: string;
+    priority?: string;
+    interactionMode?: string;
+    parentTaskId?: string | null;
+    providerConfig?: unknown;
+    involvedRepos?: string[];
+  }): Promise<{ task: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.create", ...options },
+      responseType: "dev.task.create/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskList(
+    projectId: string,
+    requestId?: string,
+  ): Promise<{ tasks: unknown[]; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.list", projectId },
+      responseType: "dev.task.list/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskInspect(
+    taskId: string,
+    requestId?: string,
+  ): Promise<{ task: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.inspect", taskId },
+      responseType: "dev.task.inspect/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskUpdate(options: {
+    requestId?: string;
+    taskId: string;
+    title?: string;
+    description?: string;
+    priority?: string;
+    status?: string;
+    interactionMode?: string;
+    parentTaskId?: string | null;
+    branchName?: string | null;
+    providerConfig?: unknown;
+    involvedRepos?: string[];
+  }): Promise<{ task: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.update", ...options },
+      responseType: "dev.task.update/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskDelete(
+    taskId: string,
+    requestId?: string,
+  ): Promise<{ taskId: string; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.delete", taskId },
+      responseType: "dev.task.delete/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskToggleZentaoSync(
+    taskId: string,
+    enabled: boolean,
+    requestId?: string,
+  ): Promise<{ task: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.toggle_zentao_sync", taskId, enabled },
+      responseType: "dev.task.toggle_zentao_sync/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskArchive(
+    taskId: string,
+    requestId?: string,
+  ): Promise<{ task: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.archive", taskId },
+      responseType: "dev.task.archive/response",
+      timeout: 10000,
+    });
+  }
+
+  async devDefaultConfigList(
+    requestId?: string,
+  ): Promise<{ configs: unknown[]; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.default_config.list" },
+      responseType: "dev.default_config.list/response",
+      timeout: 10000,
+    });
+  }
+
+  async devDefaultConfigUpdate(options: {
+    requestId?: string;
+    taskType: string;
+    provider: string;
+    model: string;
+    mode: string;
+    systemPromptTemplate?: string;
+    skillIds?: string[];
+  }): Promise<{ config: unknown | null; error: string | null }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.default_config.update", ...options },
+      responseType: "dev.default_config.update/response",
+      timeout: 10000,
+    });
+  }
+
+  // ============================================================================
   // Internals
   // ============================================================================
 

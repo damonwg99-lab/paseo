@@ -284,6 +284,9 @@ function getFallbackTabOptionLabel(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
+  if (tab.target.kind === "task") {
+    return "Task";
+  }
   return "Agent";
 }
 
@@ -302,6 +305,9 @@ function getFallbackTabOptionDescription(tab: WorkspaceTabDescriptor): string {
   }
   if (tab.target.kind === "browser") {
     return "Browser";
+  }
+  if (tab.target.kind === "task") {
+    return "Task";
   }
   return tab.target.path;
 }
