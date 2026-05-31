@@ -11,6 +11,8 @@ import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
+import type { DevPlatformServices } from "./dev-platform/dev-platform-session-handlers.js";
+import { createDevPlatformServices } from "./dev-platform/index.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -346,6 +348,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
+  private readonly devPlatformServices: DevPlatformServices;
   private readonly github: GitHubService;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly downloadTokenStore: DownloadTokenStore;
@@ -403,6 +406,7 @@ export class VoiceAssistantWebSocketServer {
     loopService?: LoopService,
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
+    devPlatformServices?: DevPlatformServices,
     scriptRouteStore?: ScriptRouteStore | null,
     scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null,
     onBranchChanged?: (
@@ -449,6 +453,7 @@ export class VoiceAssistantWebSocketServer {
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
+    this.devPlatformServices = devPlatformServices ?? createDevPlatformServices(paseoHome, logger);
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
     this.downloadTokenStore = downloadTokenStore;
@@ -866,6 +871,7 @@ export class VoiceAssistantWebSocketServer {
       loopService: this.loopService,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
+      devPlatformServices: this.devPlatformServices,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
       daemonConfigStore: this.daemonConfigStore,

@@ -224,6 +224,8 @@ import {
 import { notifyChatMentions, prepareChatMentionFanout } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { dispatchDevPlatformMessage } from "./dev-platform/dev-platform-session-handlers.js";
+import type { DevPlatformServices } from "./dev-platform/dev-platform-session-handlers.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   assertPullRequestAutoMergeDisableReady,
@@ -575,6 +577,7 @@ export interface SessionOptions {
   scheduleService: ScheduleService;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
+  devPlatformServices: DevPlatformServices;
   github?: GitHubService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
   workspaceGitService: WorkspaceGitService;
@@ -770,6 +773,7 @@ export class Session {
   private readonly scheduleService: ScheduleService;
   private readonly loopService: LoopService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
+  private readonly devPlatformServices: DevPlatformServices;
   private readonly github: GitHubService;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly daemonConfigStore: DaemonConfigStore;
@@ -856,6 +860,7 @@ export class Session {
       scheduleService,
       loopService,
       checkoutDiffManager,
+      devPlatformServices,
       github,
       workspaceGitService,
       daemonConfigStore,
@@ -902,6 +907,7 @@ export class Session {
     this.scheduleService = scheduleService;
     this.loopService = loopService;
     this.checkoutDiffManager = checkoutDiffManager;
+    this.devPlatformServices = devPlatformServices;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService;
     this.daemonConfigStore = daemonConfigStore;
@@ -1747,6 +1753,7 @@ export class Session {
       this.dispatchProviderMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchChatScheduleLoopMessage(msg) ??
+      this.dispatchDevPlatformMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -2207,6 +2214,12 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private dispatchDevPlatformMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return dispatchDevPlatformMessage(msg, this.devPlatformServices, (m) =>
+      this.emit(m as SessionOutboundMessage),
+    );
   }
 
   private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
@@ -3786,6 +3799,7 @@ export class Session {
           listen: this.daemonRuntimeConfig?.listen ?? null,
           relay: this.daemonRuntimeConfig?.relay ?? null,
           providers,
+          features: { dev_platform: true },
         },
       });
     } catch (error) {
