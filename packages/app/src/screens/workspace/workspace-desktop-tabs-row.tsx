@@ -187,6 +187,33 @@ function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
+  if (tab.target.kind === "kanban") {
+    return "Kanban";
+  }
+  if (tab.target.kind === "branches") {
+    return "Branches";
+  }
+  if (tab.target.kind === "create_project") {
+    return "New project";
+  }
+  if (tab.target.kind === "create_task") {
+    return "New task";
+  }
+  if (tab.target.kind === "task_detail") {
+    return "Task";
+  }
+  if (tab.target.kind === "task_activity") {
+    return "Activity";
+  }
+  if (tab.target.kind === "archived_tasks") {
+    return "Archived";
+  }
+  if (tab.target.kind === "project_settings") {
+    return "Settings";
+  }
+  if (tab.target.kind === "task") {
+    return "Task";
+  }
   return "Agent";
 }
 

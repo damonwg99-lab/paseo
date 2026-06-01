@@ -66,6 +66,7 @@ import {
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { SidebarDevPlatformTaskList } from "./sidebar-dev-platform-task-list";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -92,6 +93,8 @@ interface SidebarSharedProps {
   collapsedProjectKeys: SidebarShortcutModel["collapsedProjectKeys"];
   shortcutIndexByWorkspaceKey: SidebarShortcutModel["shortcutIndexByWorkspaceKey"];
   toggleProjectCollapsed: SidebarShortcutModel["toggleProjectCollapsed"];
+  collapsedDevPlatformProjectIds: Set<string>;
+  toggleDevPlatformProjectCollapsed: (projectId: string) => void;
   handleRefresh: () => void;
   handleHostSelect: (nextServerId: string) => void;
   handleOpenProject: () => void;
@@ -191,6 +194,17 @@ export const LeftSidebar = memo(function LeftSidebar({
   });
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
     useSidebarShortcutModel({ projects, isInitialLoad });
+  const [collapsedDevPlatformProjectIds, setCollapsedDevPlatformProjectIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const toggleDevPlatformProjectCollapsed = useCallback((projectId: string) => {
+    setCollapsedDevPlatformProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }, []);
 
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
@@ -271,6 +285,8 @@ export const LeftSidebar = memo(function LeftSidebar({
     collapsedProjectKeys,
     shortcutIndexByWorkspaceKey,
     toggleProjectCollapsed,
+    collapsedDevPlatformProjectIds,
+    toggleDevPlatformProjectCollapsed,
     handleRefresh,
     handleHostSelect,
     renderHostOption,
@@ -521,6 +537,8 @@ function MobileSidebar({
   collapsedProjectKeys,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
+  collapsedDevPlatformProjectIds,
+  toggleDevPlatformProjectCollapsed,
   handleRefresh,
   handleHostSelect,
   renderHostOption,
@@ -742,6 +760,12 @@ function MobileSidebar({
               />
             )}
 
+            <SidebarDevPlatformTaskList
+              serverId={activeServerId}
+              collapsedProjectIds={collapsedDevPlatformProjectIds}
+              onToggleProjectCollapsed={toggleDevPlatformProjectCollapsed}
+            />
+
             <SidebarFooter
               theme={theme}
               activeServerId={activeServerId}
@@ -780,6 +804,8 @@ function DesktopSidebar({
   collapsedProjectKeys,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
+  collapsedDevPlatformProjectIds,
+  toggleDevPlatformProjectCollapsed,
   handleRefresh,
   handleHostSelect,
   renderHostOption,
@@ -883,6 +909,12 @@ function DesktopSidebar({
             onAddProject={handleOpenProject}
           />
         )}
+
+        <SidebarDevPlatformTaskList
+          serverId={activeServerId}
+          collapsedProjectIds={collapsedDevPlatformProjectIds}
+          onToggleProjectCollapsed={toggleDevPlatformProjectCollapsed}
+        />
 
         <SidebarCalloutSlot />
 

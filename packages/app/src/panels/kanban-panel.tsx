@@ -1,4 +1,4 @@
-import { ListChecks, Plus } from "lucide-react-native";
+import { ListChecks, Plus, Archive, Settings, GitBranch, ClipboardList } from "lucide-react-native";
 import {
   Pressable,
   ScrollView,
@@ -21,56 +21,13 @@ import type {
   DevPlatformTaskStatus,
 } from "@getpaseo/protocol/dev-platform/types";
 import {
-  Bug,
-  ClipboardList,
-  Code,
-  FileText,
-  Layout,
-  Rocket,
-  TestTube,
-  type LucideIcon,
-} from "lucide-react-native";
-
-const TASK_TYPE_ICONS: Record<DevPlatformTaskType, LucideIcon> = {
-  requirement: ClipboardList,
-  design: Layout,
-  development: Code,
-  bug: Bug,
-  testing: TestTube,
-  documentation: FileText,
-  deployment: Rocket,
-};
-
-const TASK_TYPE_LABELS: Record<DevPlatformTaskType, string> = {
-  requirement: "Requirement",
-  design: "Design",
-  development: "Development",
-  bug: "Bug",
-  testing: "Testing",
-  documentation: "Documentation",
-  deployment: "Deployment",
-};
-
-const STATUS_LABELS: Record<DevPlatformTaskStatus, string> = {
-  todo: "Todo",
-  in_progress: "In Progress",
-  review: "Review",
-  done: "Done",
-  blocked: "Blocked",
-  merge_conflict: "Merge Conflict",
-  archived: "Archived",
-};
-
-const STATUS_COLUMNS: DevPlatformTaskStatus[] = ["todo", "in_progress", "review", "done"];
-const TYPE_GROUPS: DevPlatformTaskType[] = [
-  "requirement",
-  "design",
-  "development",
-  "bug",
-  "testing",
-  "deployment",
-  "documentation",
-];
+  TASK_TYPE_ICONS,
+  TASK_TYPE_LABELS,
+  STATUS_LABELS,
+  STATUS_COLUMNS,
+  TYPE_GROUPS,
+  DEPLOYMENT_STATUS_LABELS,
+} from "@/constants/dev-platform-icons";
 
 const FLEX_FILL_STYLE = { flex: 1 } as const;
 const VIEW_MODE_BAR_STYLE = {
@@ -164,7 +121,7 @@ function KanbanPanel() {
     navigateToPreparedWorkspaceTab({
       serverId,
       workspaceId: firstWorkspace.id,
-      target: { kind: "task", taskId: task.id },
+      target: { kind: "task_detail", taskId: task.id },
     });
   }, []);
 
@@ -183,6 +140,40 @@ function KanbanPanel() {
       target: { kind: "branches", projectId: target.projectId },
     });
   }, [target.projectId]);
+
+  const handleOpenArchivedTasks = useCallback(() => {
+    const sessions = useSessionStore.getState().sessions;
+    const serverIds = Object.keys(sessions);
+    const serverId = serverIds.length > 0 ? serverIds[0] : null;
+    if (!serverId) return;
+    const session = sessions[serverId];
+    if (!session) return;
+    const firstWorkspace = session.workspaces.values().next().value;
+    if (!firstWorkspace) return;
+    navigateToPreparedWorkspaceTab({
+      serverId,
+      workspaceId: firstWorkspace.id,
+      target: { kind: "archived_tasks", projectId: target.projectId },
+    });
+  }, [target.projectId]);
+
+  const handleOpenProjectSettings = useCallback(() => {
+    const sessions = useSessionStore.getState().sessions;
+    const serverIds = Object.keys(sessions);
+    const serverId = serverIds.length > 0 ? serverIds[0] : null;
+    if (!serverId) return;
+    const session = sessions[serverId];
+    if (!session) return;
+    const firstWorkspace = session.workspaces.values().next().value;
+    if (!firstWorkspace) return;
+    navigateToPreparedWorkspaceTab({
+      serverId,
+      workspaceId: firstWorkspace.id,
+      target: { kind: "project_settings", projectId: target.projectId },
+    });
+  }, [target.projectId]);
+
+  const archiveTask = useDevPlatformStore((s) => s.archiveTask);
 
   if (!isWorkspaceFocused) {
     return <View style={FLEX_FILL_STYLE} />;
@@ -208,6 +199,15 @@ function KanbanPanel() {
         >
           <Plus size={16} color={theme.colors.foregroundMuted} />
         </Pressable>
+        <Pressable onPress={handleOpenArchivedTasks} style={styles.navButton}>
+          <Archive size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
+        <Pressable onPress={handleOpenProjectSettings} style={styles.navButton}>
+          <Settings size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
+        <Pressable onPress={handleOpenBranches} style={styles.navButton}>
+          <GitBranch size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
         <View style={styles.viewModeSwitch}>
           <ViewModeButton
             label="Status"
@@ -220,12 +220,6 @@ function KanbanPanel() {
             active={viewMode === "type"}
             theme={theme}
             onPress={handleSetViewModeType}
-          />
-          <ViewModeButton
-            label="Branches"
-            active={false}
-            theme={theme}
-            onPress={handleOpenBranches}
           />
         </View>
       </View>
@@ -267,9 +261,19 @@ function KanbanPanel() {
         ) : null}
 
         {viewMode === "status" ? (
-          <StatusView tasks={activeTasks} theme={theme} onTaskPress={handleTaskPress} />
+          <StatusView
+            tasks={activeTasks}
+            theme={theme}
+            onTaskPress={handleTaskPress}
+            onArchive={archiveTask}
+          />
         ) : (
-          <TypeView tasks={activeTasks} theme={theme} onTaskPress={handleTaskPress} />
+          <TypeView
+            tasks={activeTasks}
+            theme={theme}
+            onTaskPress={handleTaskPress}
+            onArchive={archiveTask}
+          />
         )}
       </ScrollView>
     </View>
@@ -350,10 +354,12 @@ function StatusView({
   tasks,
   theme,
   onTaskPress,
+  onArchive,
 }: {
   tasks: DevPlatformTask[];
   theme: ReturnType<typeof useUnistyles>["theme"];
   onTaskPress: (task: DevPlatformTask) => void;
+  onArchive: (taskId: string) => void;
 }) {
   const grouped = useMemo(() => {
     const map = new Map<DevPlatformTaskStatus, DevPlatformTask[]>();
@@ -387,7 +393,13 @@ function StatusView({
           </View>
           <ScrollView style={styles.columnScroll} contentContainerStyle={styles.columnContent}>
             {(grouped.get(status) ?? []).map((task) => (
-              <KanbanCard key={task.id} task={task} theme={theme} onTaskPress={onTaskPress} />
+              <KanbanCard
+                key={task.id}
+                task={task}
+                theme={theme}
+                onTaskPress={onTaskPress}
+                onArchive={onArchive}
+              />
             ))}
           </ScrollView>
         </View>
@@ -400,10 +412,12 @@ function TypeView({
   tasks,
   theme,
   onTaskPress,
+  onArchive,
 }: {
   tasks: DevPlatformTask[];
   theme: ReturnType<typeof useUnistyles>["theme"];
   onTaskPress: (task: DevPlatformTask) => void;
+  onArchive: (taskId: string) => void;
 }) {
   const grouped = useMemo(() => {
     const map = new Map<DevPlatformTaskType, DevPlatformTask[]>();
@@ -437,7 +451,13 @@ function TypeView({
             </View>
             <View style={styles.typeCards}>
               {typeTasks.map((task) => (
-                <KanbanCard key={task.id} task={task} theme={theme} onTaskPress={onTaskPress} />
+                <KanbanCard
+                  key={task.id}
+                  task={task}
+                  theme={theme}
+                  onTaskPress={onTaskPress}
+                  onArchive={onArchive}
+                />
               ))}
             </View>
           </View>
@@ -483,10 +503,12 @@ function KanbanCard({
   task,
   theme,
   onTaskPress,
+  onArchive,
 }: {
   task: DevPlatformTask;
   theme: ReturnType<typeof useUnistyles>["theme"];
   onTaskPress: (task: DevPlatformTask) => void;
+  onArchive: (taskId: string) => void;
 }) {
   const TypeIcon = TASK_TYPE_ICONS[task.type] ?? ClipboardList;
   const cardStyle = useCallback(
@@ -498,6 +520,11 @@ function KanbanCard({
     [],
   );
   const handlePress = useCallback(() => onTaskPress(task), [onTaskPress, task]);
+  const handleArchive = useCallback(() => onArchive(task.id), [onArchive, task.id]);
+  const deploymentBadge =
+    task.deploymentStatus && task.deploymentStatus !== "not_deployed"
+      ? (DEPLOYMENT_STATUS_LABELS[task.deploymentStatus] ?? task.deploymentStatus)
+      : null;
   return (
     <Pressable
       style={cardStyle}
@@ -506,20 +533,33 @@ function KanbanCard({
       accessibilityRole="button"
       accessibilityLabel={task.title}
     >
-      <View style={styles.cardTop}>
-        <TypeIcon size={14} color={theme.colors.foregroundMuted} />
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {task.title}
-        </Text>
-      </View>
-      <View style={styles.cardBottom}>
-        <StatusDot status={task.status} theme={theme} />
-        <Text style={styles.cardStatus}>{STATUS_LABELS[task.status]}</Text>
-        {task.agentIds.length > 0 ? (
-          <Text style={styles.cardAgentCount}>Agent {task.agentIds.length}</Text>
-        ) : null}
-        {task.syncToZentao ? <Text style={styles.cardZentaoMark}>Zentao</Text> : null}
-      </View>
+      {({ hovered }) => (
+        <>
+          <View style={styles.cardTop}>
+            <TypeIcon size={14} color={theme.colors.foregroundMuted} />
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              {task.title}
+            </Text>
+          </View>
+          <View style={styles.cardBottom}>
+            <StatusDot status={task.status} theme={theme} />
+            <Text style={styles.cardStatus}>{STATUS_LABELS[task.status]}</Text>
+            {task.agentIds.length > 0 ? (
+              <Text style={styles.cardAgentCount}>Agent {task.agentIds.length}</Text>
+            ) : null}
+            {deploymentBadge ? <Text style={styles.cardDeployMark}>{deploymentBadge}</Text> : null}
+            {task.syncToZentao ? <Text style={styles.cardZentaoMark}>Z</Text> : null}
+          </View>
+          {hovered ? (
+            <View style={styles.cardActions}>
+              <Pressable onPress={handleArchive} style={styles.cardActionButton}>
+                <Archive size={12} color={theme.colors.foregroundMuted} />
+                <Text style={styles.cardActionText}>Archive</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </>
+      )}
     </Pressable>
   );
 }
@@ -751,5 +791,35 @@ const styles = StyleSheet.create((theme) => ({
   createProjectConfirmText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  navButton: {
+    width: 28,
+    height: 28,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  cardDeployMark: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.palette.amber[500],
+  },
+  cardActions: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    paddingTop: theme.spacing[2],
+  },
+  cardActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  cardActionText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
 }));

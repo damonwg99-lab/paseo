@@ -5,6 +5,7 @@ import {
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
 } from "@/workspace-tabs/identity";
+import { SINGLE_ID_KEYS } from "@/workspace-tabs/identity";
 import type { WorkspaceFileTabTarget } from "@/workspace/file-open";
 
 export interface WorkspaceDraftTabSetup {
@@ -23,7 +24,15 @@ export type WorkspaceTabTarget =
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
   | { kind: "setup"; workspaceId: string }
-  | { kind: "task"; taskId: string };
+  | { kind: "task"; taskId: string }
+  | { kind: "kanban"; projectId: string }
+  | { kind: "branches"; projectId: string }
+  | { kind: "create_project" }
+  | { kind: "create_task"; projectId: string }
+  | { kind: "task_detail"; taskId: string }
+  | { kind: "task_activity"; taskId: string }
+  | { kind: "archived_tasks"; projectId: string }
+  | { kind: "project_settings"; projectId: string };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -497,6 +506,8 @@ function extractMigrationRawSources(persistedState: unknown): MigrationRawSource
 
 function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
   const kind = typeof raw.kind === "string" ? raw.kind : null;
+  if (!kind) return null;
+  // Special kinds with custom coercion
   if (kind === "draft" && typeof raw.draftId === "string") {
     const setup = normalizeWorkspaceDraftTabSetup(raw.setup);
     return normalizeWorkspaceTabTarget({
@@ -504,15 +515,6 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
       draftId: raw.draftId,
       ...(setup ? { setup } : {}),
     });
-  }
-  if (kind === "agent" && typeof raw.agentId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "agent", agentId: raw.agentId });
-  }
-  if (kind === "terminal" && typeof raw.terminalId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "terminal", terminalId: raw.terminalId });
-  }
-  if (kind === "browser" && typeof raw.browserId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "browser", browserId: raw.browserId });
   }
   if (kind === "file" && typeof raw.path === "string") {
     return normalizeWorkspaceTabTarget({
@@ -522,11 +524,13 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
       lineEnd: typeof raw.lineEnd === "number" ? raw.lineEnd : undefined,
     });
   }
-  if (kind === "setup" && typeof raw.workspaceId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
+  if (kind === "create_project") {
+    return normalizeWorkspaceTabTarget({ kind: "create_project" });
   }
-  if (kind === "task" && typeof raw.taskId === "string") {
-    return normalizeWorkspaceTabTarget({ kind: "task", taskId: raw.taskId });
+  // Simple id-based kinds: { kind, idKey: raw[idKey] }
+  const idKey = SINGLE_ID_KEYS[kind];
+  if (idKey && typeof raw[idKey] === "string") {
+    return normalizeWorkspaceTabTarget({ kind, [idKey]: raw[idKey] } as WorkspaceTabTarget);
   }
   return null;
 }

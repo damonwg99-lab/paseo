@@ -25,10 +25,13 @@ export function normalizeWorkspaceTabTarget(
     const id = trimNonEmpty((value as Record<string, string | null | undefined>)[singleIdKey]);
     return id ? ({ kind: value.kind, [singleIdKey]: id } as WorkspaceTabTarget) : null;
   }
+  if (value.kind === "create_project") {
+    return { kind: "create_project" } as WorkspaceTabTarget;
+  }
   return null;
 }
 
-const SINGLE_ID_KEYS: Record<string, string> = {
+export const SINGLE_ID_KEYS: Record<string, string> = {
   agent: "agentId",
   terminal: "terminalId",
   browser: "browserId",
@@ -36,6 +39,11 @@ const SINGLE_ID_KEYS: Record<string, string> = {
   task: "taskId",
   kanban: "projectId",
   branches: "projectId",
+  create_task: "projectId",
+  task_detail: "taskId",
+  task_activity: "taskId",
+  archived_tasks: "projectId",
+  project_settings: "projectId",
 };
 
 export function normalizeWorkspaceDraftTabSetup(
@@ -126,6 +134,12 @@ const TAB_ID_PREFIXES: Record<string, string> = {
   task: "task",
   kanban: "kanban",
   branches: "branches",
+  create_project: "create_project",
+  create_task: "create_task",
+  task_detail: "task_detail",
+  task_activity: "task_activity",
+  archived_tasks: "archived_tasks",
+  project_settings: "project_settings",
 };
 
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
@@ -133,6 +147,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return target.draftId;
   }
   const prefix = TAB_ID_PREFIXES[target.kind];
+  if (target.kind === "create_project") {
+    return `create_project_${Date.now()}`;
+  }
   if (prefix) {
     const idKey = SINGLE_ID_KEYS[target.kind] as keyof typeof target;
     return `${prefix}_${(target as Record<string, string>)[idKey]}`;

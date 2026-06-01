@@ -100,7 +100,34 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "task") {
     return `workspace-task-close-${tab.target.taskId}`;
   }
-  return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
+  if (tab.target.kind === "kanban") {
+    return `workspace-kanban-close-${tab.target.projectId}`;
+  }
+  if (tab.target.kind === "branches") {
+    return `workspace-branches-close-${tab.target.projectId}`;
+  }
+  if (tab.target.kind === "create_project") {
+    return `workspace-create-project-close`;
+  }
+  if (tab.target.kind === "create_task") {
+    return `workspace-create-task-close-${tab.target.projectId}`;
+  }
+  if (tab.target.kind === "task_detail") {
+    return `workspace-task-detail-close-${tab.target.taskId}`;
+  }
+  if (tab.target.kind === "task_activity") {
+    return `workspace-task-activity-close-${tab.target.taskId}`;
+  }
+  if (tab.target.kind === "archived_tasks") {
+    return `workspace-archived-tasks-close-${tab.target.projectId}`;
+  }
+  if (tab.target.kind === "project_settings") {
+    return `workspace-project-settings-close-${tab.target.projectId}`;
+  }
+  if (tab.target.kind === "file") {
+    return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
+  }
+  return `workspace-unknown-close`;
 }
 
 export function buildWorkspaceTabMenuEntries(
