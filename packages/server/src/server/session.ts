@@ -99,6 +99,7 @@ import type {
   AgentManagerEvent,
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
+  AgentTimelineFetchResult,
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
@@ -121,7 +122,8 @@ import {
 } from "./agent/timeline-append.js";
 import {
   projectTimelineRows,
-  selectTimelineWindowByProjectedLimit,
+  selectProjectedTimelinePage,
+  type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
 import {
@@ -569,6 +571,7 @@ export interface SessionOptions {
   downloadTokenStore: DownloadTokenStore;
   pushTokenStore: PushTokenStore;
   paseoHome: string;
+  worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
@@ -719,6 +722,15 @@ function parseClientCapabilities(
   return new Set(result);
 }
 
+interface AgentTimelineProjectionSelection {
+  timeline: AgentTimelineFetchResult;
+  entries: TimelineProjectionEntry[];
+  startSeq: number | null;
+  endSeq: number | null;
+  hasOlder: boolean;
+  hasNewer: boolean;
+}
+
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -734,6 +746,7 @@ export class Session {
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly worktreesRoot: string | undefined;
 
   // State machine
   private abortController: AbortController;
@@ -852,6 +865,7 @@ export class Session {
       downloadTokenStore,
       pushTokenStore,
       paseoHome,
+      worktreesRoot,
       agentManager,
       agentStorage,
       projectRegistry,
@@ -894,6 +908,7 @@ export class Session {
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
     this.paseoHome = paseoHome;
+    this.worktreesRoot = worktreesRoot;
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -920,9 +935,12 @@ export class Session {
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
+      clientSupportsWrapReflow: () =>
+        this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
     });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       github: this.github,
@@ -3111,6 +3129,7 @@ export class Session {
           agentStorage: this.agentStorage,
           logger: this.sessionLogger,
           paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
           workspaceGitService: this.workspaceGitService,
           providerSnapshotManager: this.providerSnapshotManager,
           daemonConfig: this.readStructuredGenerationDaemonConfig(),
@@ -3491,6 +3510,7 @@ export class Session {
     return buildWorktreeAgentSessionConfig(
       {
         paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
         sessionLogger: this.sessionLogger,
         workspaceGitService: this.workspaceGitService,
         createPaseoWorktree: (input, serviceOptions) =>
@@ -5231,7 +5251,7 @@ export class Session {
           baseRef,
           mode: msg.strategy === "squash" ? "squash" : "merge",
         },
-        { paseoHome: this.paseoHome },
+        { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
       );
       await Promise.all([
         this.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateGithub: true }),
@@ -5712,6 +5732,7 @@ export class Session {
     return handleWorktreeArchiveRequest(
       {
         paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
@@ -7299,6 +7320,7 @@ export class Session {
     return handleCreateWorktreeRequest(
       {
         paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
         describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
@@ -7318,6 +7340,7 @@ export class Session {
     return createWorktreeWorkflow(
       {
         paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
         createPaseoWorktree: (workflowInput, serviceOptions) =>
           this.createPaseoWorktree(workflowInput, serviceOptions),
         warmWorkspaceGitData: (workspace) => this.warmWorkspaceGitDataForWorkspace(workspace),
@@ -7429,70 +7452,83 @@ export class Session {
     });
   }
 
-  private loadProjectedTimelineWindow(params: {
-    agentId: string;
-    direction: AgentTimelineFetchDirection;
-    cursor: AgentTimelineCursor | undefined;
-    requestedLimit: number;
-    timeline: ReturnType<AgentManager["fetchTimeline"]>;
-  }): {
-    timeline: ReturnType<AgentManager["fetchTimeline"]>;
-    selectedRows: ReturnType<typeof selectTimelineWindowByProjectedLimit>["selectedRows"];
-    minSeq: number | null;
-    maxSeq: number | null;
-  } {
-    const { agentId, direction, cursor, requestedLimit } = params;
-    let timeline = params.timeline;
-    const projectedLimit = Math.max(1, Math.floor(requestedLimit));
-    let fetchLimit = projectedLimit;
-    let projectedWindow = selectTimelineWindowByProjectedLimit({
-      rows: timeline.rows,
-      direction,
-      limit: projectedLimit,
-      collapseToolLifecycle: false,
-    });
-
-    while (timeline.hasOlder) {
-      const needsMoreProjectedEntries = projectedWindow.projectedEntries.length < projectedLimit;
-      const firstLoadedRow = timeline.rows[0];
-      const firstSelectedRow = projectedWindow.selectedRows[0];
-      const startsAtLoadedBoundary =
-        firstLoadedRow != null &&
-        firstSelectedRow != null &&
-        firstSelectedRow.seq === firstLoadedRow.seq;
-      const boundaryIsAssistantChunk =
-        startsAtLoadedBoundary && firstLoadedRow.item.type === "assistant_message";
-
-      if (!needsMoreProjectedEntries && !boundaryIsAssistantChunk) {
-        break;
-      }
-
-      const maxRows = Math.max(0, timeline.window.maxSeq - timeline.window.minSeq + 1);
-      const nextFetchLimit = Math.min(maxRows, fetchLimit * 2);
-      if (nextFetchLimit <= fetchLimit) {
-        break;
-      }
-
-      fetchLimit = nextFetchLimit;
-      timeline = this.agentManager.fetchTimeline(agentId, {
-        direction,
-        cursor,
-        limit: fetchLimit,
-      });
-      projectedWindow = selectTimelineWindowByProjectedLimit({
-        rows: timeline.rows,
-        direction,
-        limit: projectedLimit,
-        collapseToolLifecycle: false,
-      });
+  private shouldUseFullTimelineForProjectedPage(input: {
+    timeline: AgentTimelineFetchResult;
+  }): boolean {
+    const { timeline } = input;
+    if (timeline.reset || timeline.rows.length === 0 || !timeline.hasOlder) {
+      return false;
     }
+
+    const firstRow = timeline.rows[0];
+    if (
+      firstRow?.item.type === "assistant_message" ||
+      firstRow?.item.type === "reasoning" ||
+      firstRow?.item.type === "tool_call"
+    ) {
+      return true;
+    }
+
+    return timeline.rows.some((row) => row.item.type === "tool_call");
+  }
+
+  private selectCanonicalTimelineProjection(input: {
+    timeline: AgentTimelineFetchResult;
+  }): AgentTimelineProjectionSelection {
+    const entries = projectTimelineRows({ rows: input.timeline.rows, mode: "canonical" });
+    return {
+      timeline: input.timeline,
+      entries,
+      startSeq: entries[0]?.seqStart ?? null,
+      endSeq: entries[entries.length - 1]?.seqEnd ?? null,
+      hasOlder: input.timeline.hasOlder,
+      hasNewer: input.timeline.hasNewer,
+    };
+  }
+
+  private selectProjectedTimelineProjection(input: {
+    agentId: string;
+    controlTimeline: AgentTimelineFetchResult;
+    direction: AgentTimelineFetchDirection;
+    cursor?: AgentTimelineCursor;
+    pageLimit: number;
+  }): AgentTimelineProjectionSelection {
+    const timeline = this.shouldUseFullTimelineForProjectedPage({
+      timeline: input.controlTimeline,
+    })
+      ? this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 })
+      : input.controlTimeline;
+    const page = selectProjectedTimelinePage({
+      rows: timeline.rows,
+      bounds: timeline.window,
+      direction: input.controlTimeline.reset ? "tail" : input.direction,
+      ...(input.cursor ? { cursorSeq: input.cursor.seq } : {}),
+      limit: input.pageLimit,
+    });
 
     return {
       timeline,
-      selectedRows: projectedWindow.selectedRows,
-      minSeq: projectedWindow.minSeq,
-      maxSeq: projectedWindow.maxSeq,
+      entries: page.entries,
+      startSeq: page.startSeq,
+      endSeq: page.endSeq,
+      hasOlder: page.hasOlder || (page.startSeq !== null && page.startSeq > timeline.window.minSeq),
+      hasNewer: page.hasNewer,
     };
+  }
+
+  private selectTimelineProjection(input: {
+    agentId: string;
+    projection: TimelineProjectionMode;
+    controlTimeline: AgentTimelineFetchResult;
+    direction: AgentTimelineFetchDirection;
+    cursor?: AgentTimelineCursor;
+    pageLimit: number;
+  }): AgentTimelineProjectionSelection {
+    if (input.projection === "canonical") {
+      return this.selectCanonicalTimelineProjection({ timeline: input.controlTimeline });
+    }
+
+    return this.selectProjectedTimelineProjection(input);
   }
 
   private async handleFetchAgentTimelineRequest(
@@ -7501,12 +7537,7 @@ export class Session {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     const projection: TimelineProjectionMode = msg.projection ?? "projected";
     const requestedLimit = msg.limit;
-    const limit = requestedLimit ?? (direction === "after" ? 0 : undefined);
-    const shouldLimitByProjectedWindow =
-      projection === "canonical" &&
-      direction === "tail" &&
-      typeof requestedLimit === "number" &&
-      requestedLimit > 0;
+    const pageLimit = requestedLimit ?? (direction === "after" ? 0 : 200);
     const cursor: AgentTimelineCursor | undefined = msg.cursor
       ? {
           epoch: msg.cursor.epoch,
@@ -7522,43 +7553,27 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      let timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const controlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
-        limit:
-          shouldLimitByProjectedWindow && typeof requestedLimit === "number"
-            ? Math.max(1, Math.floor(requestedLimit))
-            : limit,
+        limit: pageLimit,
       });
-      let hasOlder = timeline.hasOlder;
-      let hasNewer = timeline.hasNewer;
-      let startCursor: { epoch: string; seq: number } | null = null;
-      let endCursor: { epoch: string; seq: number } | null = null;
-      let entries: ReturnType<typeof projectTimelineRows>;
-
-      if (shouldLimitByProjectedWindow) {
-        const projectedResult = this.loadProjectedTimelineWindow({
-          agentId: msg.agentId,
-          direction,
-          cursor,
-          requestedLimit,
-          timeline,
-        });
-        timeline = projectedResult.timeline;
-        entries = projectTimelineRows({ rows: projectedResult.selectedRows, mode: projection });
-        if (projectedResult.minSeq !== null && projectedResult.maxSeq !== null) {
-          startCursor = { epoch: timeline.epoch, seq: projectedResult.minSeq };
-          endCursor = { epoch: timeline.epoch, seq: projectedResult.maxSeq };
-          hasOlder = projectedResult.minSeq > timeline.window.minSeq;
-          hasNewer = false;
-        }
-      } else {
-        const firstRow = timeline.rows[0];
-        const lastRow = timeline.rows[timeline.rows.length - 1];
-        startCursor = firstRow ? { epoch: timeline.epoch, seq: firstRow.seq } : null;
-        endCursor = lastRow ? { epoch: timeline.epoch, seq: lastRow.seq } : null;
-        entries = projectTimelineRows({ rows: timeline.rows, mode: projection });
-      }
+      const selectedTimeline = this.selectTimelineProjection({
+        agentId: msg.agentId,
+        projection,
+        controlTimeline,
+        direction,
+        ...(cursor ? { cursor } : {}),
+        pageLimit,
+      });
+      const startCursor =
+        selectedTimeline.startSeq !== null
+          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
+          : null;
+      const endCursor =
+        selectedTimeline.endSeq !== null
+          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
+          : null;
 
       this.emit({
         type: "fetch_agent_timeline_response",
@@ -7568,16 +7583,16 @@ export class Session {
           agent: agentPayload,
           direction,
           projection,
-          epoch: timeline.epoch,
-          reset: timeline.reset,
-          staleCursor: timeline.staleCursor,
-          gap: timeline.gap,
-          window: timeline.window,
+          epoch: selectedTimeline.timeline.epoch,
+          reset: controlTimeline.reset,
+          staleCursor: controlTimeline.staleCursor,
+          gap: controlTimeline.gap,
+          window: selectedTimeline.timeline.window,
           startCursor,
           endCursor,
-          hasOlder,
-          hasNewer,
-          entries: entries.map((entry) => ({
+          hasOlder: selectedTimeline.hasOlder,
+          hasNewer: selectedTimeline.hasNewer,
+          entries: selectedTimeline.entries.map((entry) => ({
             provider: snapshot.provider,
             item: entry.item,
             timestamp: entry.timestamp,
