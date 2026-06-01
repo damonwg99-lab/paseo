@@ -3,6 +3,7 @@ import type { DevPlatformProjectService } from "./project-service.js";
 import type { DevPlatformTaskService } from "./task-service.js";
 import type { DevPlatformContextService } from "./context-service.js";
 import type { DefaultAgentConfigService } from "./default-agent-config-service.js";
+import type { ZentaoConfigService } from "./zentao-config-service.js";
 import type {
   CreateDevPlatformProjectInput,
   UpdateDevPlatformProjectInput,
@@ -15,6 +16,7 @@ export interface DevPlatformServices {
   taskService: DevPlatformTaskService;
   contextService: DevPlatformContextService;
   defaultAgentConfigService: DefaultAgentConfigService;
+  zentaoConfigService: ZentaoConfigService;
 }
 
 export function dispatchDevPlatformMessage(
@@ -26,7 +28,8 @@ export function dispatchDevPlatformMessage(
     dispatchDevProjectMessage(msg, services, emit) ??
     dispatchDevTaskMessage(msg, services, emit) ??
     dispatchDevContextMessage(msg, services, emit) ??
-    dispatchDevDefaultConfigMessage(msg, services, emit)
+    dispatchDevDefaultConfigMessage(msg, services, emit) ??
+    dispatchDevZentaoMessage(msg, services, emit)
   );
 }
 
@@ -44,8 +47,8 @@ function dispatchDevProjectMessage(
       return handleDevProjectInspect(msg, services, emit);
     case "dev.project.update":
       return handleDevProjectUpdate(msg, services, emit);
-    case "dev.project.delete":
-      return handleDevProjectDelete(msg, services, emit);
+    case "dev.project.archive":
+      return handleDevProjectArchive(msg, services, emit);
     default:
       return undefined;
   }
@@ -65,8 +68,6 @@ function dispatchDevTaskMessage(
       return handleDevTaskInspect(msg, services, emit);
     case "dev.task.update":
       return handleDevTaskUpdate(msg, services, emit);
-    case "dev.task.delete":
-      return handleDevTaskDelete(msg, services, emit);
     case "dev.task.toggle_zentao_sync":
       return handleDevTaskToggleZentaoSync(msg, services, emit);
     case "dev.task.set_interaction_mode":
@@ -150,13 +151,14 @@ async function handleDevProjectCreate(
   try {
     const project = await services.projectService.create({
       name: msg.name,
+      rootDirectory: msg.rootDirectory,
       description: msg.description,
       gitRepos: msg.gitRepos,
       zentaoProjectId: msg.zentaoProjectId,
       uatBranch: msg.uatBranch,
       prdBranch: msg.prdBranch,
       cicdConfig: msg.cicdConfig,
-    } as CreateDevPlatformProjectInput);
+    } satisfies CreateDevPlatformProjectInput);
     emit({
       type: "dev.project.create/response",
       payload: { requestId: msg.requestId, project, error: null },
@@ -213,7 +215,8 @@ async function handleDevProjectUpdate(
       uatBranch: msg.uatBranch,
       prdBranch: msg.prdBranch,
       cicdConfig: msg.cicdConfig,
-    } as UpdateDevPlatformProjectInput);
+      archivedAt: msg.archivedAt,
+    } satisfies UpdateDevPlatformProjectInput);
     emit({
       type: "dev.project.update/response",
       payload: { requestId: msg.requestId, project, error: null },
@@ -223,19 +226,19 @@ async function handleDevProjectUpdate(
   }
 }
 
-async function handleDevProjectDelete(
-  msg: SessionInboundMessage & { type: "dev.project.delete" },
+async function handleDevProjectArchive(
+  msg: SessionInboundMessage & { type: "dev.project.archive" },
   services: DevPlatformServices,
   emit: (msg: unknown) => void,
 ): Promise<void> {
   try {
-    await services.projectService.delete(msg.projectId);
+    const project = await services.projectService.archive(msg.projectId);
     emit({
-      type: "dev.project.delete/response",
-      payload: { requestId: msg.requestId, projectId: msg.projectId, error: null },
+      type: "dev.project.archive/response",
+      payload: { requestId: msg.requestId, project, error: project ? null : "Project not found" },
     });
   } catch (error) {
-    emitError(msg, "dev.project.delete/response", String(error), emit);
+    emitError(msg, "dev.project.archive/response", String(error), emit);
   }
 }
 
@@ -257,9 +260,10 @@ async function handleDevTaskCreate(
       priority: msg.priority,
       interactionMode: msg.interactionMode,
       parentTaskId: msg.parentTaskId,
+      syncToZentao: msg.syncToZentao,
       providerConfig: msg.providerConfig,
       involvedRepos: msg.involvedRepos,
-    } as CreateDevPlatformTaskInput);
+    } satisfies CreateDevPlatformTaskInput);
     emit({
       type: "dev.task.create/response",
       payload: { requestId: msg.requestId, task, error: null },
@@ -318,29 +322,14 @@ async function handleDevTaskUpdate(
       branchName: msg.branchName,
       providerConfig: msg.providerConfig,
       involvedRepos: msg.involvedRepos,
-    } as UpdateDevPlatformTaskInput);
+      archivedAt: msg.archivedAt,
+    } satisfies UpdateDevPlatformTaskInput);
     emit({
       type: "dev.task.update/response",
       payload: { requestId: msg.requestId, task, error: null },
     });
   } catch (error) {
     emitError(msg, "dev.task.update/response", String(error), emit);
-  }
-}
-
-async function handleDevTaskDelete(
-  msg: SessionInboundMessage & { type: "dev.task.delete" },
-  services: DevPlatformServices,
-  emit: (msg: unknown) => void,
-): Promise<void> {
-  try {
-    await services.taskService.delete(msg.taskId);
-    emit({
-      type: "dev.task.delete/response",
-      payload: { requestId: msg.requestId, taskId: msg.taskId, error: null },
-    });
-  } catch (error) {
-    emitError(msg, "dev.task.delete/response", String(error), emit);
   }
 }
 
@@ -583,5 +572,63 @@ async function handleDevDefaultConfigUpdate(
     });
   } catch (error) {
     emitError(msg, "dev.default_config.update/response", String(error), emit);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// dev.zentao.* handlers
+// ---------------------------------------------------------------------------
+
+function dispatchDevZentaoMessage(
+  msg: SessionInboundMessage,
+  services: DevPlatformServices,
+  emit: (msg: unknown) => void,
+): Promise<void> | undefined {
+  switch (msg.type) {
+    case "dev.zentao.configure":
+      return handleDevZentaoConfigure(msg, services, emit);
+    case "dev.zentao.configure.status":
+      return handleDevZentaoConfigureStatus(msg, services, emit);
+    default:
+      return undefined;
+  }
+}
+
+async function handleDevZentaoConfigure(
+  msg: SessionInboundMessage & { type: "dev.zentao.configure" },
+  services: DevPlatformServices,
+  emit: (msg: unknown) => void,
+): Promise<void> {
+  try {
+    const config = await services.zentaoConfigService.save({
+      url: msg.url,
+      account: msg.account,
+      token: msg.password,
+      productId: msg.productId,
+    });
+    const { connected } = await services.zentaoConfigService.verifyConnection();
+    emit({
+      type: "dev.zentao.configure/response",
+      payload: { requestId: msg.requestId, config, connected, error: null },
+    });
+  } catch (error) {
+    emitError(msg, "dev.zentao.configure/response", String(error), emit);
+  }
+}
+
+async function handleDevZentaoConfigureStatus(
+  msg: SessionInboundMessage & { type: "dev.zentao.configure.status" },
+  services: DevPlatformServices,
+  emit: (msg: unknown) => void,
+): Promise<void> {
+  try {
+    const config = await services.zentaoConfigService.read();
+    const { connected } = await services.zentaoConfigService.verifyConnection();
+    emit({
+      type: "dev.zentao.configure.status/response",
+      payload: { requestId: msg.requestId, config, connected, error: null },
+    });
+  } catch (error) {
+    emitError(msg, "dev.zentao.configure.status/response", String(error), emit);
   }
 }

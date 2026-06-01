@@ -17,31 +17,26 @@ export function normalizeWorkspaceTabTarget(
     const setup = normalizeWorkspaceDraftTabSetup(value.setup);
     return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
   }
-  if (value.kind === "agent") {
-    const agentId = trimNonEmpty(value.agentId);
-    return agentId ? { kind: "agent", agentId } : null;
-  }
-  if (value.kind === "terminal") {
-    const terminalId = trimNonEmpty(value.terminalId);
-    return terminalId ? { kind: "terminal", terminalId } : null;
-  }
-  if (value.kind === "browser") {
-    const browserId = trimNonEmpty(value.browserId);
-    return browserId ? { kind: "browser", browserId } : null;
-  }
   if (value.kind === "file") {
     return normalizeFileTabTarget(value);
   }
-  if (value.kind === "setup") {
-    const workspaceId = trimNonEmpty(value.workspaceId);
-    return workspaceId ? { kind: "setup", workspaceId } : null;
-  }
-  if (value.kind === "task") {
-    const taskId = trimNonEmpty(value.taskId);
-    return taskId ? { kind: "task", taskId } : null;
+  const singleIdKey = SINGLE_ID_KEYS[value.kind];
+  if (singleIdKey && singleIdKey !== "kind") {
+    const id = trimNonEmpty((value as Record<string, string | null | undefined>)[singleIdKey]);
+    return id ? ({ kind: value.kind, [singleIdKey]: id } as WorkspaceTabTarget) : null;
   }
   return null;
 }
+
+const SINGLE_ID_KEYS: Record<string, string> = {
+  agent: "agentId",
+  terminal: "terminalId",
+  browser: "browserId",
+  setup: "workspaceId",
+  task: "taskId",
+  kanban: "projectId",
+  branches: "projectId",
+};
 
 export function normalizeWorkspaceDraftTabSetup(
   value: unknown,
@@ -77,23 +72,15 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "draft" && right.kind === "draft") {
     return left.draftId === right.draftId && workspaceDraftTabSetupsEqual(left.setup, right.setup);
   }
-  if (left.kind === "agent" && right.kind === "agent") {
-    return left.agentId === right.agentId;
-  }
-  if (left.kind === "terminal" && right.kind === "terminal") {
-    return left.terminalId === right.terminalId;
-  }
-  if (left.kind === "browser" && right.kind === "browser") {
-    return left.browserId === right.browserId;
-  }
   if (left.kind === "file" && right.kind === "file") {
     return workspaceFileLocationsEqual(left, right);
   }
-  if (left.kind === "setup" && right.kind === "setup") {
-    return left.workspaceId === right.workspaceId;
-  }
-  if (left.kind === "task" && right.kind === "task") {
-    return left.taskId === right.taskId;
+  const singleIdKey = SINGLE_ID_KEYS[left.kind];
+  if (singleIdKey) {
+    return (
+      (left as Record<string, string>)[singleIdKey] ===
+      (right as Record<string, string>)[singleIdKey]
+    );
   }
   return false;
 }
@@ -131,26 +118,29 @@ function recordsShallowEqual(
   return true;
 }
 
+const TAB_ID_PREFIXES: Record<string, string> = {
+  agent: "agent",
+  terminal: "terminal",
+  browser: "browser",
+  setup: "setup",
+  task: "task",
+  kanban: "kanban",
+  branches: "branches",
+};
+
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
   if (target.kind === "draft") {
     return target.draftId;
   }
-  if (target.kind === "agent") {
-    return `agent_${target.agentId}`;
+  const prefix = TAB_ID_PREFIXES[target.kind];
+  if (prefix) {
+    const idKey = SINGLE_ID_KEYS[target.kind] as keyof typeof target;
+    return `${prefix}_${(target as Record<string, string>)[idKey]}`;
   }
-  if (target.kind === "terminal") {
-    return `terminal_${target.terminalId}`;
+  if (target.kind === "file") {
+    return `file_${target.path}`;
   }
-  if (target.kind === "browser") {
-    return `browser_${target.browserId}`;
-  }
-  if (target.kind === "setup") {
-    return `setup_${target.workspaceId}`;
-  }
-  if (target.kind === "task") {
-    return `task_${target.taskId}`;
-  }
-  return `file_${target.path}`;
+  return `${prefix ?? target.kind}_${(target as Record<string, string>).projectId ?? ""}`;
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {

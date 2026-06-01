@@ -2,51 +2,82 @@ import { create } from "zustand";
 import type {
   DevPlatformProject,
   DevPlatformTask,
+  DevPlatformGitRepo,
+  DevPlatformTaskType,
+  DevPlatformTaskPriority,
+  DevPlatformTaskStatus,
+  DevPlatformInteractionMode,
+  DevPlatformProviderConfig,
+  CicdConfig,
   DefaultAgentConfig,
 } from "@getpaseo/protocol/dev-platform/types";
+import type { BranchStatusEntry } from "@getpaseo/protocol/dev-platform/rpc-schemas";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 
 interface DevPlatformState {
   projects: DevPlatformProject[];
   tasksByProject: Record<string, DevPlatformTask[]>;
+  branchStatusByProject: Record<string, BranchStatusEntry[]>;
   defaultAgentConfigs: DefaultAgentConfig[];
   loading: boolean;
   error: string | null;
 
   fetchProjects: () => Promise<void>;
   fetchTasks: (projectId: string) => Promise<void>;
+  fetchBranchStatus: (projectId: string) => Promise<void>;
   fetchDefaultConfigs: () => Promise<void>;
   createProject: (input: {
     name: string;
+    rootDirectory: string;
     description?: string;
-    gitRepos?: unknown[];
+    gitRepos?: DevPlatformGitRepo[];
     zentaoProjectId?: string;
     uatBranch?: string;
     prdBranch?: string;
+    cicdConfig?: CicdConfig | null;
   }) => Promise<DevPlatformProject | null>;
+  updateProject: (input: {
+    projectId: string;
+    name?: string;
+    description?: string;
+    gitRepos?: DevPlatformGitRepo[];
+    zentaoProjectId?: string;
+    uatBranch?: string;
+    prdBranch?: string;
+    cicdConfig?: CicdConfig | null;
+    archivedAt?: string | null;
+  }) => Promise<DevPlatformProject | null>;
+  archiveProject: (projectId: string) => Promise<DevPlatformProject | null>;
   createTask: (input: {
     projectId: string;
-    taskType: string;
+    taskType: DevPlatformTaskType;
     title: string;
     description?: string;
-    priority?: string;
-    interactionMode?: string;
+    priority?: DevPlatformTaskPriority;
+    interactionMode?: DevPlatformInteractionMode;
     parentTaskId?: string | null;
+    syncToZentao?: boolean;
+    providerConfig?: DevPlatformProviderConfig | null;
+    involvedRepos?: string[];
   }) => Promise<DevPlatformTask | null>;
   updateTask: (input: {
     taskId: string;
     title?: string;
     description?: string;
-    priority?: string;
-    status?: string;
-    interactionMode?: string;
+    priority?: DevPlatformTaskPriority;
+    status?: DevPlatformTaskStatus;
+    interactionMode?: DevPlatformInteractionMode;
+    parentTaskId?: string | null;
     branchName?: string | null;
+    providerConfig?: DevPlatformProviderConfig | null;
+    involvedRepos?: string[];
+    archivedAt?: string | null;
   }) => Promise<DevPlatformTask | null>;
   toggleZentaoSync: (taskId: string, enabled: boolean) => Promise<DevPlatformTask | null>;
   archiveTask: (taskId: string) => Promise<DevPlatformTask | null>;
   updateDefaultConfig: (input: {
-    taskType: string;
+    taskType: DevPlatformTaskType;
     provider: string;
     model: string;
     mode: string;
@@ -64,9 +95,24 @@ function getClient(): DaemonClient {
   return client;
 }
 
+function updateTaskInState(
+  state: DevPlatformState,
+  task: DevPlatformTask,
+): Partial<DevPlatformState> {
+  return {
+    tasksByProject: {
+      ...state.tasksByProject,
+      [task.projectId]: (state.tasksByProject[task.projectId] ?? []).map((t) =>
+        t.id === task.id ? task : t,
+      ),
+    },
+  };
+}
+
 export const useDevPlatformStore = create<DevPlatformState>((set) => ({
   projects: [],
   tasksByProject: {},
+  branchStatusByProject: {},
   defaultAgentConfigs: [],
   loading: false,
   error: null,
@@ -74,9 +120,9 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
   fetchProjects: async () => {
     set({ loading: true, error: null });
     try {
-      const result = await getClient().devProjectList();
+      const payload = await getClient().devProjectList();
       set({
-        projects: (result.projects as DevPlatformProject[]) ?? [],
+        projects: payload.projects ?? [],
         loading: false,
       });
     } catch (error) {
@@ -86,11 +132,25 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   fetchTasks: async (projectId: string) => {
     try {
-      const result = await getClient().devTaskList(projectId);
+      const payload = await getClient().devTaskList(projectId);
       set((state) => ({
         tasksByProject: {
           ...state.tasksByProject,
-          [projectId]: (result.tasks as DevPlatformTask[]) ?? [],
+          [projectId]: payload.tasks ?? [],
+        },
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  fetchBranchStatus: async (projectId: string) => {
+    try {
+      const payload = await getClient().devProjectBranchStatusList({ projectId });
+      set((state) => ({
+        branchStatusByProject: {
+          ...state.branchStatusByProject,
+          [projectId]: payload.branches ?? [],
         },
       }));
     } catch (error) {
@@ -100,8 +160,8 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   fetchDefaultConfigs: async () => {
     try {
-      const result = await getClient().devDefaultConfigList();
-      set({ defaultAgentConfigs: (result.configs as DefaultAgentConfig[]) ?? [] });
+      const payload = await getClient().devDefaultConfigList();
+      set({ defaultAgentConfigs: payload.configs ?? [] });
     } catch (error) {
       set({ error: String(error) });
     }
@@ -109,8 +169,8 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   createProject: async (input) => {
     try {
-      const result = await getClient().devProjectCreate(input);
-      const project = result.project as DevPlatformProject | null;
+      const payload = await getClient().devProjectCreate(input);
+      const project = payload.project;
       if (project) {
         set((state) => ({ projects: [...state.projects, project] }));
       }
@@ -121,10 +181,42 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
     }
   },
 
+  updateProject: async (input) => {
+    try {
+      const payload = await getClient().devProjectUpdate(input);
+      const project = payload.project;
+      if (project) {
+        set((state) => ({
+          projects: state.projects.map((p) => (p.id === project.id ? project : p)),
+        }));
+      }
+      return project;
+    } catch (error) {
+      set({ error: String(error) });
+      return null;
+    }
+  },
+
+  archiveProject: async (projectId: string) => {
+    try {
+      const payload = await getClient().devProjectArchive(projectId);
+      const project = payload.project;
+      if (project) {
+        set((state) => ({
+          projects: state.projects.map((p) => (p.id === project.id ? project : p)),
+        }));
+      }
+      return project;
+    } catch (error) {
+      set({ error: String(error) });
+      return null;
+    }
+  },
+
   createTask: async (input) => {
     try {
-      const result = await getClient().devTaskCreate(input);
-      const task = result.task as DevPlatformTask | null;
+      const payload = await getClient().devTaskCreate(input);
+      const task = payload.task;
       if (task) {
         set((state) => ({
           tasksByProject: {
@@ -142,17 +234,10 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   updateTask: async (input) => {
     try {
-      const result = await getClient().devTaskUpdate(input);
-      const task = result.task as DevPlatformTask | null;
+      const payload = await getClient().devTaskUpdate(input);
+      const task = payload.task;
       if (task) {
-        set((state) => ({
-          tasksByProject: {
-            ...state.tasksByProject,
-            [task.projectId]: (state.tasksByProject[task.projectId] ?? []).map((t) =>
-              t.id === task.id ? task : t,
-            ),
-          },
-        }));
+        set((state) => updateTaskInState(state, task));
       }
       return task;
     } catch (error) {
@@ -163,17 +248,10 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   toggleZentaoSync: async (taskId: string, enabled: boolean) => {
     try {
-      const result = await getClient().devTaskToggleZentaoSync(taskId, enabled);
-      const task = result.task as DevPlatformTask | null;
+      const payload = await getClient().devTaskToggleZentaoSync(taskId, enabled);
+      const task = payload.task;
       if (task) {
-        set((state) => ({
-          tasksByProject: {
-            ...state.tasksByProject,
-            [task.projectId]: (state.tasksByProject[task.projectId] ?? []).map((t) =>
-              t.id === task.id ? task : t,
-            ),
-          },
-        }));
+        set((state) => updateTaskInState(state, task));
       }
       return task;
     } catch (error) {
@@ -184,17 +262,10 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   archiveTask: async (taskId: string) => {
     try {
-      const result = await getClient().devTaskArchive(taskId);
-      const task = result.task as DevPlatformTask | null;
+      const payload = await getClient().devTaskArchive(taskId);
+      const task = payload.task;
       if (task) {
-        set((state) => ({
-          tasksByProject: {
-            ...state.tasksByProject,
-            [task.projectId]: (state.tasksByProject[task.projectId] ?? []).map((t) =>
-              t.id === task.id ? task : t,
-            ),
-          },
-        }));
+        set((state) => updateTaskInState(state, task));
       }
       return task;
     } catch (error) {
@@ -205,8 +276,8 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
 
   updateDefaultConfig: async (input) => {
     try {
-      const result = await getClient().devDefaultConfigUpdate(input);
-      const config = result.config as DefaultAgentConfig | null;
+      const payload = await getClient().devDefaultConfigUpdate(input);
+      const config = payload.config;
       if (config) {
         set((state) => ({
           defaultAgentConfigs: state.defaultAgentConfigs.map((c) =>

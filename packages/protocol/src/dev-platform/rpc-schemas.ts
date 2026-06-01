@@ -26,6 +26,7 @@ export const DevProjectCreateRequestSchema = z.object({
   type: z.literal("dev.project.create"),
   requestId: z.string(),
   name: z.string().trim().min(1),
+  rootDirectory: z.string().trim().min(1),
   description: z.string().optional(),
   gitRepos: z.array(DevPlatformGitRepoSchema).optional(),
   zentaoProjectId: z.string().optional(),
@@ -83,6 +84,7 @@ export const DevProjectUpdateRequestSchema = z.object({
   uatBranch: z.string().optional(),
   prdBranch: z.string().optional(),
   cicdConfig: CicdConfigSchema.nullable().optional(),
+  archivedAt: z.string().nullable().optional(),
 });
 
 export const DevProjectUpdateResponseSchema = z.object({
@@ -94,17 +96,17 @@ export const DevProjectUpdateResponseSchema = z.object({
   }),
 });
 
-export const DevProjectDeleteRequestSchema = z.object({
-  type: z.literal("dev.project.delete"),
+export const DevProjectArchiveRequestSchema = z.object({
+  type: z.literal("dev.project.archive"),
   requestId: z.string(),
   projectId: z.string(),
 });
 
-export const DevProjectDeleteResponseSchema = z.object({
-  type: z.literal("dev.project.delete/response"),
+export const DevProjectArchiveResponseSchema = z.object({
+  type: z.literal("dev.project.archive/response"),
   payload: z.object({
     requestId: z.string(),
-    projectId: z.string(),
+    project: DevPlatformProjectSchema.nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -223,6 +225,7 @@ export const DevTaskCreateRequestSchema = z.object({
   priority: z.enum(["low", "medium", "high", "critical"]).optional(),
   interactionMode: DevPlatformInteractionModeSchema.optional(),
   parentTaskId: z.string().nullable().optional(),
+  syncToZentao: z.boolean().optional(),
   providerConfig: DevPlatformProviderConfigSchema.nullable().optional(),
   involvedRepos: z.array(z.string()).optional(),
 });
@@ -276,9 +279,10 @@ export const DevTaskUpdateRequestSchema = z.object({
   status: DevPlatformTaskStatusSchema.optional(),
   interactionMode: DevPlatformInteractionModeSchema.optional(),
   parentTaskId: z.string().nullable().optional(),
-  branchName: z.string().nullable().optional(),
+  branchName: z.string().trim().min(1).nullable().optional(),
   providerConfig: DevPlatformProviderConfigSchema.nullable().optional(),
   involvedRepos: z.array(z.string()).optional(),
+  archivedAt: z.string().nullable().optional(),
 });
 
 export const DevTaskUpdateResponseSchema = z.object({

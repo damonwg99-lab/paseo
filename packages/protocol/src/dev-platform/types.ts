@@ -14,7 +14,7 @@ export type DevPlatformGitRepo = z.infer<typeof DevPlatformGitRepoSchema>;
 export const CicdConfigSchema = z.object({
   type: z.enum(["jenkins", "github_actions", "gitlab_ci", "custom"]),
   url: z.string().trim().min(1),
-  token: z.string(),
+  token: z.string().trim().min(1),
   uatJob: z.string().trim().min(1),
   prdJob: z.string().trim().min(1),
   autoTriggerUat: z.boolean().default(true),
@@ -25,12 +25,14 @@ export type CicdConfig = z.infer<typeof CicdConfigSchema>;
 export const DevPlatformProjectSchema = z.object({
   id: z.string(),
   name: z.string().trim().min(1),
+  rootDirectory: z.string().trim().min(1),
   description: z.string().optional(),
   gitRepos: z.array(DevPlatformGitRepoSchema).default([]),
   zentaoProjectId: z.string().optional(),
   uatBranch: z.string().optional(),
   prdBranch: z.string().optional(),
   cicdConfig: CicdConfigSchema.nullable().default(null),
+  archivedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -50,6 +52,9 @@ export const DevPlatformTaskTypeSchema = z.enum([
   "deployment",
 ]);
 export type DevPlatformTaskType = z.infer<typeof DevPlatformTaskTypeSchema>;
+
+export const DevPlatformTaskPrioritySchema = z.enum(["low", "medium", "high", "critical"]);
+export type DevPlatformTaskPriority = z.infer<typeof DevPlatformTaskPrioritySchema>;
 
 export const DevPlatformTaskStatusSchema = z.enum([
   "todo",
@@ -100,12 +105,13 @@ export const DevPlatformTaskSchema = z.object({
   branchName: z.string().nullable().default(null),
   deploymentStatus: DevPlatformDeploymentStatusSchema.default("not_deployed"),
   buildStatus: DevPlatformBuildStatusSchema.default("not_built"),
-  dependsOn: z.array(z.string()).optional(),
-  contextIds: z.array(z.string()).optional(),
-  skillIds: z.array(z.string()).optional(),
+  dependsOn: z.array(z.string()).default([]),
+  contextIds: z.array(z.string()).default([]),
+  skillIds: z.array(z.string()).default([]),
   outputDir: z.string().nullable().default(null),
   providerConfig: DevPlatformProviderConfigSchema.nullable().default(null),
-  involvedRepos: z.array(z.string()).optional(),
+  involvedRepos: z.array(z.string()).default([]),
+  archivedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -251,6 +257,7 @@ export type TaskActivity = z.infer<typeof TaskActivitySchema>;
 
 export interface CreateDevPlatformProjectInput {
   name: string;
+  rootDirectory: string;
   description?: string;
   gitRepos?: DevPlatformGitRepo[];
   zentaoProjectId?: string;
@@ -268,6 +275,7 @@ export interface UpdateDevPlatformProjectInput {
   uatBranch?: string;
   prdBranch?: string;
   cicdConfig?: CicdConfig | null;
+  archivedAt?: string | null;
 }
 
 export interface CreateDevPlatformTaskInput {
@@ -278,6 +286,7 @@ export interface CreateDevPlatformTaskInput {
   priority?: "low" | "medium" | "high" | "critical";
   interactionMode?: DevPlatformInteractionMode;
   parentTaskId?: string | null;
+  syncToZentao?: boolean;
   providerConfig?: DevPlatformProviderConfig | null;
   involvedRepos?: string[];
 }
@@ -293,6 +302,7 @@ export interface UpdateDevPlatformTaskInput {
   branchName?: string | null;
   providerConfig?: DevPlatformProviderConfig | null;
   involvedRepos?: string[];
+  archivedAt?: string | null;
 }
 
 export interface CreateDevPlatformContextInput {

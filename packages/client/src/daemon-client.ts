@@ -90,6 +90,32 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
+import type {
+  DevPlatformGitRepo,
+  CicdConfig,
+  DevPlatformTaskType,
+  DevPlatformTaskStatus,
+  DevPlatformInteractionMode,
+  DevPlatformProviderConfig,
+} from "@getpaseo/protocol/dev-platform/types";
+
+type DevPlatformTaskPriority = "low" | "medium" | "high" | "critical";
+import {
+  DevProjectCreateResponseSchema,
+  DevProjectListResponseSchema,
+  DevProjectInspectResponseSchema,
+  DevProjectUpdateResponseSchema,
+  DevProjectArchiveResponseSchema,
+  DevTaskCreateResponseSchema,
+  DevTaskListResponseSchema,
+  DevTaskInspectResponseSchema,
+  DevTaskUpdateResponseSchema,
+  DevTaskToggleZentaoSyncResponseSchema,
+  DevTaskArchiveResponseSchema,
+  DevDefaultConfigListResponseSchema,
+  DevDefaultConfigUpdateResponseSchema,
+  DevProjectBranchStatusListResponseSchema,
+} from "@getpaseo/protocol/dev-platform/rpc-schemas";
 import {
   asUint8Array,
   decodeFileTransferFrame,
@@ -4252,13 +4278,14 @@ export class DaemonClient {
   async devProjectCreate(options: {
     requestId?: string;
     name: string;
+    rootDirectory: string;
     description?: string;
-    gitRepos?: unknown[];
+    gitRepos?: DevPlatformGitRepo[];
     zentaoProjectId?: string;
     uatBranch?: string;
     prdBranch?: string;
-    cicdConfig?: unknown;
-  }): Promise<{ project: unknown | null; error: string | null }> {
+    cicdConfig?: CicdConfig | null;
+  }): Promise<z.infer<typeof DevProjectCreateResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId ?? crypto.randomUUID(),
       message: { type: "dev.project.create", ...options },
@@ -4267,7 +4294,9 @@ export class DaemonClient {
     });
   }
 
-  async devProjectList(requestId?: string): Promise<{ projects: unknown[]; error: string | null }> {
+  async devProjectList(
+    requestId?: string,
+  ): Promise<z.infer<typeof DevProjectListResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.project.list" },
@@ -4279,7 +4308,7 @@ export class DaemonClient {
   async devProjectInspect(
     projectId: string,
     requestId?: string,
-  ): Promise<{ project: unknown | null; error: string | null }> {
+  ): Promise<z.infer<typeof DevProjectInspectResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.project.inspect", projectId },
@@ -4288,18 +4317,51 @@ export class DaemonClient {
     });
   }
 
+  async devProjectUpdate(options: {
+    requestId?: string;
+    projectId: string;
+    name?: string;
+    description?: string;
+    gitRepos?: DevPlatformGitRepo[];
+    zentaoProjectId?: string;
+    uatBranch?: string;
+    prdBranch?: string;
+    cicdConfig?: CicdConfig | null;
+    archivedAt?: string | null;
+  }): Promise<z.infer<typeof DevProjectUpdateResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.project.update", ...options },
+      responseType: "dev.project.update/response",
+      timeout: 10000,
+    });
+  }
+
+  async devProjectArchive(
+    projectId: string,
+    requestId?: string,
+  ): Promise<z.infer<typeof DevProjectArchiveResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.project.archive", projectId },
+      responseType: "dev.project.archive/response",
+      timeout: 10000,
+    });
+  }
+
   async devTaskCreate(options: {
     requestId?: string;
     projectId: string;
-    taskType: string;
+    taskType: DevPlatformTaskType;
     title: string;
     description?: string;
-    priority?: string;
-    interactionMode?: string;
+    priority?: DevPlatformTaskPriority;
+    interactionMode?: DevPlatformInteractionMode;
     parentTaskId?: string | null;
-    providerConfig?: unknown;
+    syncToZentao?: boolean;
+    providerConfig?: DevPlatformProviderConfig | null;
     involvedRepos?: string[];
-  }): Promise<{ task: unknown | null; error: string | null }> {
+  }): Promise<z.infer<typeof DevTaskCreateResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.create", ...options },
@@ -4311,7 +4373,7 @@ export class DaemonClient {
   async devTaskList(
     projectId: string,
     requestId?: string,
-  ): Promise<{ tasks: unknown[]; error: string | null }> {
+  ): Promise<z.infer<typeof DevTaskListResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.list", projectId },
@@ -4323,7 +4385,7 @@ export class DaemonClient {
   async devTaskInspect(
     taskId: string,
     requestId?: string,
-  ): Promise<{ task: unknown | null; error: string | null }> {
+  ): Promise<z.infer<typeof DevTaskInspectResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.inspect", taskId },
@@ -4337,14 +4399,15 @@ export class DaemonClient {
     taskId: string;
     title?: string;
     description?: string;
-    priority?: string;
-    status?: string;
-    interactionMode?: string;
+    priority?: DevPlatformTaskPriority;
+    status?: DevPlatformTaskStatus;
+    interactionMode?: DevPlatformInteractionMode;
     parentTaskId?: string | null;
     branchName?: string | null;
-    providerConfig?: unknown;
+    providerConfig?: DevPlatformProviderConfig | null;
     involvedRepos?: string[];
-  }): Promise<{ task: unknown | null; error: string | null }> {
+    archivedAt?: string | null;
+  }): Promise<z.infer<typeof DevTaskUpdateResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.update", ...options },
@@ -4353,23 +4416,11 @@ export class DaemonClient {
     });
   }
 
-  async devTaskDelete(
-    taskId: string,
-    requestId?: string,
-  ): Promise<{ taskId: string; error: string | null }> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: requestId ?? crypto.randomUUID(),
-      message: { type: "dev.task.delete", taskId },
-      responseType: "dev.task.delete/response",
-      timeout: 10000,
-    });
-  }
-
   async devTaskToggleZentaoSync(
     taskId: string,
     enabled: boolean,
     requestId?: string,
-  ): Promise<{ task: unknown | null; error: string | null }> {
+  ): Promise<z.infer<typeof DevTaskToggleZentaoSyncResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.toggle_zentao_sync", taskId, enabled },
@@ -4381,7 +4432,7 @@ export class DaemonClient {
   async devTaskArchive(
     taskId: string,
     requestId?: string,
-  ): Promise<{ task: unknown | null; error: string | null }> {
+  ): Promise<z.infer<typeof DevTaskArchiveResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.archive", taskId },
@@ -4392,7 +4443,7 @@ export class DaemonClient {
 
   async devDefaultConfigList(
     requestId?: string,
-  ): Promise<{ configs: unknown[]; error: string | null }> {
+  ): Promise<z.infer<typeof DevDefaultConfigListResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.default_config.list" },
@@ -4403,17 +4454,29 @@ export class DaemonClient {
 
   async devDefaultConfigUpdate(options: {
     requestId?: string;
-    taskType: string;
+    taskType: DevPlatformTaskType;
     provider: string;
     model: string;
     mode: string;
     systemPromptTemplate?: string;
     skillIds?: string[];
-  }): Promise<{ config: unknown | null; error: string | null }> {
+  }): Promise<z.infer<typeof DevDefaultConfigUpdateResponseSchema>["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId ?? crypto.randomUUID(),
       message: { type: "dev.default_config.update", ...options },
       responseType: "dev.default_config.update/response",
+      timeout: 10000,
+    });
+  }
+
+  async devProjectBranchStatusList(options: {
+    requestId?: string;
+    projectId: string;
+  }): Promise<z.infer<typeof DevProjectBranchStatusListResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.project.branch_status.list", projectId: options.projectId },
+      responseType: "dev.project.branch_status.list/response",
       timeout: 10000,
     });
   }

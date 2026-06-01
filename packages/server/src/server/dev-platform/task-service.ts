@@ -6,36 +6,46 @@ import type {
   DevPlatformTask,
   UpdateDevPlatformTaskInput,
 } from "@getpaseo/protocol/dev-platform/types";
-import { DevPlatformTaskStore } from "./store.js";
+import { DevPlatformTaskStore, DevPlatformProjectStore } from "./store.js";
 
 export interface DevPlatformTaskServiceOptions {
   paseoHome: string;
   logger: Logger;
+  projectStore?: DevPlatformProjectStore;
 }
 
 export class DevPlatformTaskService {
   private readonly store: DevPlatformTaskStore;
+  private readonly projectStore?: DevPlatformProjectStore;
   private readonly logger: Logger;
 
   constructor(options: DevPlatformTaskServiceOptions) {
     this.store = new DevPlatformTaskStore(join(options.paseoHome, "dev-platform", "tasks"));
+    this.projectStore = options.projectStore;
     this.logger = options.logger;
   }
 
   async create(input: CreateDevPlatformTaskInput): Promise<DevPlatformTask> {
+    if (this.projectStore) {
+      const project = await this.projectStore.get(input.projectId);
+      if (!project) {
+        throw new Error(`Project not found: ${input.projectId}`);
+      }
+    }
+
     this.logger.info("Creating dev platform task: %s (type=%s)", input.title, input.type);
     const task = await this.store.create({
       projectId: input.projectId,
       type: input.type,
       title: input.title,
-      description: input.description ?? "",
+      description: input.description ?? undefined,
       priority: input.priority ?? "medium",
       status: "todo",
       interactionMode: input.interactionMode ?? "step_by_step",
       parentTaskId: input.parentTaskId ?? null,
       agentIds: [],
       activeAgentId: null,
-      syncToZentao: false,
+      syncToZentao: input.syncToZentao ?? false,
       zentaoId: null,
       branchName: null,
       deploymentStatus: "not_deployed",
@@ -46,6 +56,7 @@ export class DevPlatformTaskService {
       outputDir: null,
       providerConfig: input.providerConfig ?? null,
       involvedRepos: input.involvedRepos ?? [],
+      archivedAt: null,
     });
     return task;
   }
@@ -97,20 +108,13 @@ export class DevPlatformTaskService {
     if (input.involvedRepos !== undefined) {
       updated.involvedRepos = input.involvedRepos;
     }
+    if (input.archivedAt !== undefined) {
+      updated.archivedAt = input.archivedAt;
+    }
 
     await this.store.put(updated);
     this.logger.info("Updated dev platform task: %s", updated.id);
     return updated;
-  }
-
-  async delete(taskId: string): Promise<boolean> {
-    const existing = await this.store.get(taskId);
-    if (!existing) {
-      return false;
-    }
-    await this.store.delete(taskId);
-    this.logger.info("Deleted dev platform task: %s", taskId);
-    return true;
   }
 
   async toggleZentaoSync(taskId: string, enabled: boolean): Promise<DevPlatformTask | null> {
@@ -235,11 +239,13 @@ export class DevPlatformTaskService {
     if (!existing) {
       return null;
     }
+    const now = new Date().toISOString();
     const updated: DevPlatformTask = {
       ...existing,
       status: "archived",
+      archivedAt: now,
       activeAgentId: null,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
     await this.store.put(updated);
     this.logger.info("Archived task %s", taskId);
