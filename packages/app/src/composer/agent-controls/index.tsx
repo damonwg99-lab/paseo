@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   View,
   Text,
@@ -56,7 +57,7 @@ import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manife
 import {
   getFeatureHighlightColor,
   getFeatureTooltip,
-  getAgentControlHint,
+  getAgentControlHintKey,
   formatThinkingOptionLabel,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
@@ -97,6 +98,7 @@ interface ControlledAgentControlsProps {
   /** Extra elements rendered inline with the agent controls (desktop only). */
   desktopExtras?: ReactNode;
   modelSelectorServerId?: string | null;
+  isCompactLayout?: boolean;
 }
 
 export interface DraftAgentControlsProps {
@@ -124,12 +126,14 @@ export interface DraftAgentControlsProps {
   isRetryingModelProvider?: boolean;
   disabled?: boolean;
   modelSelectorServerId?: string | null;
+  isCompactLayout?: boolean;
 }
 
 interface AgentControlsProps {
   agentId: string;
   serverId: string;
   onDropdownClose?: () => void;
+  isCompactLayout?: boolean;
 }
 
 function findOptionLabel(
@@ -409,9 +413,12 @@ function ControlledAgentControls({
   isRetryingModelProvider = false,
   desktopExtras,
   modelSelectorServerId = null,
+  isCompactLayout,
 }: ControlledAgentControlsProps) {
   const { theme } = useUnistyles();
-  const isCompact = useIsCompactFormFactor();
+  const { t } = useTranslation();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
 
@@ -427,7 +434,11 @@ function ControlledAgentControls({
     onSelectThinkingOption && thinkingOptions && thinkingOptions.length > 0,
   );
 
-  const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
+  const displayProvider = findOptionLabel(
+    providerOptions,
+    selectedProviderId,
+    t("agentControls.provider.fallback"),
+  );
   const formattedThinkingOptions = useMemo(
     () => toThinkingControlOptions(thinkingOptions),
     [thinkingOptions],
@@ -435,7 +446,7 @@ function ControlledAgentControls({
   const displayThinking = findOptionLabel(
     formattedThinkingOptions,
     selectedThinkingOptionId,
-    formattedThinkingOptions[0]?.label ?? "Unknown",
+    formattedThinkingOptions[0]?.label ?? t("agentControls.thinking.unknown"),
   );
 
   const ProviderIcon = resolveProviderIcon(provider);
@@ -704,6 +715,7 @@ const DESKTOP_SEARCH_THRESHOLD = 6;
 
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const {
     provider,
     providerOptions,
@@ -759,7 +771,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             onPress={handleProviderPress}
             style={providerPressableStyle}
             accessibilityRole="button"
-            accessibilityLabel="Select agent provider"
+            accessibilityLabel={t("agentControls.provider.select")}
             testID="agent-provider-selector"
           >
             <Text style={styles.modeBadgeText}>{displayProvider}</Text>
@@ -800,7 +812,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             </View>
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{getAgentControlHint("model")}</Text>
+            <Text style={styles.tooltipText}>{t(getAgentControlHintKey("model"))}</Text>
           </TooltipContent>
         </Tooltip>
       ) : null}
@@ -816,7 +828,9 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 onPress={handleThinkingPress}
                 style={thinkingPressableStyle}
                 accessibilityRole="button"
-                accessibilityLabel={`Select thinking option (${displayThinking})`}
+                accessibilityLabel={t("agentControls.thinking.selectWithValue", {
+                  value: displayThinking,
+                })}
                 testID="agent-thinking-selector"
               >
                 <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
@@ -825,7 +839,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
               </Pressable>
             </TooltipTrigger>
             <TooltipContent side="top" align="center" offset={8}>
-              <Text style={styles.tooltipText}>{getAgentControlHint("thinking")}</Text>
+              <Text style={styles.tooltipText}>{t(getAgentControlHintKey("thinking"))}</Text>
             </TooltipContent>
           </Tooltip>
           <Combobox
@@ -896,6 +910,7 @@ interface SheetAgentControlsContentProps {
 
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const {
     provider,
     selectedModelId,
@@ -931,6 +946,10 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
 
   const hasThinking = comboboxThinkingOptions.length > 0;
   const hasFeatures = Boolean(features && features.length > 0);
+  const featuresSheetHeader = useMemo<SheetHeader>(
+    () => ({ title: t("agentControls.features.title") }),
+    [t],
+  );
 
   const handleOpenThinking = useCallback(() => handleOpenSheet("thinking"), [handleOpenSheet]);
   const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
@@ -1007,7 +1026,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
           disabled={disabled || !canSelectThinking}
           style={thinkingButtonStyle}
           accessibilityRole="button"
-          accessibilityLabel="Select thinking option"
+          accessibilityLabel={t("agentControls.thinking.select")}
           testID="agent-controls-thinking"
         >
           <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
@@ -1020,7 +1039,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
           disabled={disabled}
           style={featuresButtonStyle}
           accessibilityRole="button"
-          accessibilityLabel="Open agent features"
+          accessibilityLabel={t("agentControls.features.open")}
           testID="agent-controls-features"
         >
           <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
@@ -1033,7 +1052,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
           value={selectedThinkingOptionId ?? ""}
           onSelect={handleSelectThinkingAndClose}
           searchable={false}
-          title="Thinking"
+          title={t("agentControls.thinking.title")}
           open={activeSheet === "thinking"}
           onOpenChange={handleThinkingSheetOpenChange}
           anchorRef={thinkingAnchorRef}
@@ -1042,7 +1061,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       ) : null}
 
       <AdaptiveModalSheet
-        header={FEATURES_SHEET_HEADER}
+        header={featuresSheetHeader}
         visible={activeSheet === "features"}
         onClose={handleCloseSheet}
         testID="agent-features-sheet"
@@ -1201,6 +1220,7 @@ function SheetFeatureItem({
   onSetFeature?: (featureId: string, value: unknown) => void;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
 
   const handleFeatureOpenChange = useMemo(
@@ -1252,7 +1272,9 @@ function SheetFeatureItem({
             )}
           />
           <Text style={styles.sheetSelectText}>{feature.label}</Text>
-          <Text style={styles.modeBadgeText}>{feature.value ? "On" : "Off"}</Text>
+          <Text style={styles.modeBadgeText}>
+            {feature.value ? t("agentControls.features.on") : t("agentControls.features.off")}
+          </Text>
         </Pressable>
       </View>
     );
@@ -1339,12 +1361,11 @@ function ThinkingComboboxOption({
   );
 }
 
-const FEATURES_SHEET_HEADER: SheetHeader = { title: "Features" };
-
 export const AgentControls = memo(function AgentControls({
   agentId,
   serverId,
   onDropdownClose,
+  isCompactLayout,
 }: AgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
@@ -1518,8 +1539,15 @@ export const AgentControls = memo(function AgentControls({
   );
 
   const modeChip = useMemo(
-    () => <AgentModeControl serverId={serverId} agentId={agentId} placement="toolbar" />,
-    [serverId, agentId],
+    () => (
+      <AgentModeControl
+        serverId={serverId}
+        agentId={agentId}
+        placement="toolbar"
+        isCompactLayout={isCompactLayout}
+      />
+    ),
+    [serverId, agentId, isCompactLayout],
   );
 
   if (!agent) {
@@ -1548,6 +1576,7 @@ export const AgentControls = memo(function AgentControls({
       disabled={!client}
       desktopExtras={modeChip}
       modelSelectorServerId={serverId}
+      isCompactLayout={isCompactLayout}
     />
   );
 });
@@ -1577,9 +1606,11 @@ export function DraftAgentControls({
   isRetryingModelProvider = false,
   disabled = false,
   modelSelectorServerId = null,
+  isCompactLayout,
 }: DraftAgentControlsProps) {
   const { preferences, updatePreferences } = useFormPreferences();
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
 
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
@@ -1625,9 +1656,18 @@ export function DraftAgentControls({
         selectedMode={selectedMode}
         onSelectMode={onSelectMode}
         disabled={disabled}
+        isCompactLayout={isCompactLayout}
       />
     ),
-    [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
+    [
+      selectedProvider,
+      providerDefinitions,
+      modeOptions,
+      selectedMode,
+      onSelectMode,
+      disabled,
+      isCompactLayout,
+    ],
   );
 
   if (!isCompact) {
@@ -1661,6 +1701,7 @@ export function DraftAgentControls({
             isRetryingModelProvider={isRetryingModelProvider}
             disabled={disabled}
             desktopExtras={draftModeChip}
+            isCompactLayout={isCompactLayout}
           />
         ) : null}
       </View>
@@ -1688,6 +1729,7 @@ export function DraftAgentControls({
       isRetryingModelProvider={isRetryingModelProvider}
       disabled={disabled}
       modelSelectorServerId={modelSelectorServerId}
+      isCompactLayout={isCompactLayout}
     />
   );
 }

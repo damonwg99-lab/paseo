@@ -11,8 +11,6 @@ import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
-import type { DevPlatformServices } from "./dev-platform/dev-platform-session-handlers.js";
-import { createDevPlatformServices } from "./dev-platform/index.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -26,7 +24,7 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import { asUint8Array, decodeTerminalStreamFrame } from "@getpaseo/protocol/binary-frames/index";
+import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
@@ -37,7 +35,8 @@ import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.
 import { PushTokenStore } from "./push/token-store.js";
 import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
-import type { ScriptRouteStore } from "./script-proxy.js";
+import type { ServiceProxySubsystem } from "./service-proxy.js";
+import type { DevPlatformServices } from "./dev-platform/dev-platform-session-handlers.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
@@ -149,6 +148,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     scheduleRefreshForCwd: () => {},
+    onWorkspaceStateMayHaveChanged: () => {},
     dispose: () => {},
   };
 }
@@ -326,6 +326,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
+  private readonly socketMessageQueues: Map<WebSocketLike, Promise<void>> = new Map();
   private readonly serverId: string;
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig:
@@ -348,7 +349,6 @@ export class VoiceAssistantWebSocketServer {
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
-  private readonly devPlatformServices: DevPlatformServices;
   private readonly github: GitHubService;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly downloadTokenStore: DownloadTokenStore;
@@ -360,10 +360,12 @@ export class VoiceAssistantWebSocketServer {
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
-  private scriptRouteStore!: ScriptRouteStore | null;
+  private serviceProxy!: ServiceProxySubsystem | null;
+  private devPlatformServices!: DevPlatformServices;
   private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
   private getDaemonTcpPort!: (() => number | null) | null;
   private getDaemonTcpHost!: (() => string | null) | null;
+  private serviceProxyPublicBaseUrl!: string | null;
   private resolveScriptHealth!: ((hostname: string) => ScriptHealthState | null) | null;
   private dictation!: {
     finalTimeoutMs?: number;
@@ -408,7 +410,7 @@ export class VoiceAssistantWebSocketServer {
     scheduleService?: ScheduleService,
     checkoutDiffManager?: CheckoutDiffManager,
     devPlatformServices?: DevPlatformServices,
-    scriptRouteStore?: ScriptRouteStore | null,
+    serviceProxy?: ServiceProxySubsystem | null,
     scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null,
     onBranchChanged?: (
       workspaceId: string,
@@ -433,6 +435,7 @@ export class VoiceAssistantWebSocketServer {
         publicUseTls: boolean;
       };
     },
+    serviceProxyPublicBaseUrl?: string | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -455,7 +458,10 @@ export class VoiceAssistantWebSocketServer {
     this.loopService = requiredServices.loopService;
     this.scheduleService = requiredServices.scheduleService;
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
-    this.devPlatformServices = devPlatformServices ?? createDevPlatformServices(paseoHome, logger);
+    if (!devPlatformServices) {
+      throw new Error("devPlatformServices is required");
+    }
+    this.devPlatformServices = devPlatformServices;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
     this.downloadTokenStore = downloadTokenStore;
@@ -468,11 +474,12 @@ export class VoiceAssistantWebSocketServer {
       terminalManager,
       dictation,
       onLifecycleIntent,
-      scriptRouteStore,
+      serviceProxy,
       scriptRuntimeStore,
       onBranchChanged,
       getDaemonTcpPort,
       getDaemonTcpHost,
+      serviceProxyPublicBaseUrl,
       resolveScriptHealth,
     });
     if (!providerSnapshotManager) {
@@ -516,24 +523,26 @@ export class VoiceAssistantWebSocketServer {
     terminalManager: TerminalManager | null | undefined;
     dictation: { finalTimeoutMs?: number } | undefined;
     onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | undefined;
-    scriptRouteStore: ScriptRouteStore | null | undefined;
+    serviceProxy: ServiceProxySubsystem | null | undefined;
     scriptRuntimeStore: WorkspaceScriptRuntimeStore | null | undefined;
     onBranchChanged:
       | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
       | undefined;
     getDaemonTcpPort: (() => number | null) | undefined;
     getDaemonTcpHost: (() => string | null) | undefined;
+    serviceProxyPublicBaseUrl: string | null | undefined;
     resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | undefined;
   }): void {
     this.speech = params.speech ?? null;
     this.terminalManager = params.terminalManager ?? null;
     this.dictation = params.dictation ?? null;
     this.onLifecycleIntent = params.onLifecycleIntent ?? null;
-    this.scriptRouteStore = params.scriptRouteStore ?? null;
+    this.serviceProxy = params.serviceProxy ?? null;
     this.scriptRuntimeStore = params.scriptRuntimeStore ?? null;
     this.onBranchChanged = params.onBranchChanged ?? null;
     this.getDaemonTcpPort = params.getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = params.getDaemonTcpHost ?? null;
+    this.serviceProxyPublicBaseUrl = params.serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = params.resolveScriptHealth ?? null;
   }
 
@@ -885,12 +894,13 @@ export class VoiceAssistantWebSocketServer {
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
-      scriptRouteStore: this.scriptRouteStore ?? undefined,
+      serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,
       getDaemonTcpHost: this.getDaemonTcpHost ?? undefined,
+      serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
       resolveScriptHealth: this.resolveScriptHealth ?? undefined,
       voice: {
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,
@@ -1053,6 +1063,7 @@ export class VoiceAssistantWebSocketServer {
         providersSnapshot: true,
         // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75, remove gate after 2026-11-13.
         checkoutGithubSetAutoMerge: true,
+        githubCheckDetails: true,
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -1096,7 +1107,7 @@ export class VoiceAssistantWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      void this.handleRawMessage(ws, data);
+      this.enqueueRawMessage(ws, data);
     });
 
     ws.on("close", async (...args: unknown[]) => {
@@ -1117,6 +1128,25 @@ export class VoiceAssistantWebSocketServer {
       log.error({ err }, "Client error");
       await this.detachSocket(ws, { error: err });
     });
+  }
+
+  private enqueueRawMessage(
+    ws: WebSocketLike,
+    data: Buffer | ArrayBuffer | Buffer[] | string,
+  ): void {
+    const previous = this.socketMessageQueues.get(ws) ?? Promise.resolve();
+    const next = previous.then(
+      () => this.handleRawMessage(ws, data),
+      () => this.handleRawMessage(ws, data),
+    );
+    this.socketMessageQueues.set(ws, next);
+    void next
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.socketMessageQueues.get(ws) === next) {
+          this.socketMessageQueues.delete(ws);
+        }
+      });
   }
 
   public resolveVoiceSpeakHandler(callerAgentId: string): VoiceSpeakHandler | null {
@@ -1298,19 +1328,19 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  private maybeHandleBinaryFrame(params: {
+  private async maybeHandleBinaryFrame(params: {
     ws: WebSocketLike;
     buffer: Buffer;
     activeConnection: SessionConnection | undefined;
     log: pino.Logger;
-  }): boolean {
+  }): Promise<boolean> {
     const { ws, buffer, activeConnection, log } = params;
     const asBytes = asUint8Array(buffer);
     if (!asBytes) {
       return false;
     }
-    const frame = decodeTerminalStreamFrame(asBytes);
-    if (!frame) {
+    const decodedFrame = decodeBinaryFrame(asBytes);
+    if (!decodedFrame) {
       return false;
     }
     if (!activeConnection) {
@@ -1324,7 +1354,7 @@ export class VoiceAssistantWebSocketServer {
       }
       return true;
     }
-    activeConnection.session.handleBinaryFrame(frame);
+    await activeConnection.session.handleBinaryFrame(decodedFrame);
     return true;
   }
 
@@ -1369,7 +1399,7 @@ export class VoiceAssistantWebSocketServer {
 
     try {
       const buffer = bufferFromWsData(data);
-      const binaryHandled = this.maybeHandleBinaryFrame({
+      const binaryHandled = await this.maybeHandleBinaryFrame({
         ws,
         buffer,
         activeConnection,

@@ -1,6 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { TFunction } from "i18next";
 import { SquarePen } from "lucide-react-native";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ActivityIndicator, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,16 +15,30 @@ import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
 import { FileDropZone } from "@/components/file-drop-zone";
+import { uploadFileAttachments } from "@/composer/actions";
+import {
+  getMimeTypeFromPath,
+  isRasterImageFile,
+  isRasterImagePath,
+} from "@/attachments/file-types";
+import { readDesktopFileBytes } from "@/hooks/use-file-picker";
+import type { DroppedItem } from "@/hooks/use-file-drop-zone";
+import type { UserComposerAttachment } from "@/attachments/types";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import type { ImageAttachment } from "@/composer/types";
 import { getProviderIcon } from "@/components/provider-icons";
-import { ToastViewport, useToastHost } from "@/components/toast-host";
+import {
+  ToastViewport,
+  useToastHost,
+  type ToastApi,
+  type ToastState,
+} from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
@@ -36,6 +52,7 @@ import {
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -148,13 +165,14 @@ function buildChatAgentFromState(
 function renderChatAgentNonReadyView(args: {
   viewState: AgentScreenViewState;
   effectiveAgent: AgentScreenAgent | null;
+  t: TFunction;
 }): React.ReactElement | null {
-  const { viewState, effectiveAgent } = args;
+  const { viewState, effectiveAgent, t } = args;
   if (viewState.tag === "not_found") {
     return (
       <View style={styles.container} testID="agent-not-found">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.notFound")}</Text>
         </View>
       </View>
     );
@@ -163,7 +181,7 @@ function renderChatAgentNonReadyView(args: {
     return (
       <View style={styles.container} testID="agent-load-error">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Failed to load agent</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
           <Text style={styles.statusText}>{viewState.message}</Text>
         </View>
       </View>
@@ -442,6 +460,7 @@ function AgentPanelContent({
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
   const daemons = useHosts();
@@ -455,7 +474,8 @@ function AgentPanelContent({
   const daemon = connectionServerId
     ? (daemons.find((entry) => entry.serverId === connectionServerId) ?? null)
     : null;
-  const serverLabel = daemon?.label ?? connectionServerId ?? "Selected host";
+  const serverLabel =
+    daemon?.label ?? connectionServerId ?? t("agentPanel.unavailable.selectedHost");
   const isUnknownDaemon = Boolean(connectionServerId && !daemon);
   const connectionStatus: HostRuntimeConnectionStatus =
     isUnknownDaemon && runtimeConnectionStatus === "connecting"
@@ -470,6 +490,7 @@ function AgentPanelContent({
         connectionStatus={connectionStatus}
         lastError={lastConnectionError}
         isUnknownDaemon={isUnknownDaemon}
+        t={t}
       />
     );
   }
@@ -504,6 +525,7 @@ function AgentPanelBody({
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
   const projectPlacement = useStoreWithEqualityFn(
@@ -600,7 +622,7 @@ function AgentPanelBody({
     return (
       <View style={styles.container} testID="agent-not-found">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.notFound")}</Text>
         </View>
       </View>
     );
@@ -610,7 +632,7 @@ function AgentPanelBody({
     return (
       <View style={styles.container} testID="agent-load-error">
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Failed to load agent</Text>
+          <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
           <Text style={styles.statusText}>{lookupState.message}</Text>
         </View>
       </View>
@@ -669,10 +691,12 @@ function ChatAgentContent({
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
-  const panelToast = useToastHost();
+  const { t } = useTranslation();
+  const { api: toastApi, toast: toastState, dismiss: dismissToast } = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
+  const addFilesRef = useRef<((files: UserComposerAttachment[]) => void) | null>(null);
   const clearOnAgentBlurRef = useRef<() => void>(() => {});
   const wasPaneFocusedRef = useRef(isPaneFocused);
   const reconnectToastArmedRef = useRef(false);
@@ -688,6 +712,46 @@ function ChatAgentContent({
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
     addImagesRef.current = addImages;
   }, []);
+
+  const handleAddFilesCallback = useCallback(
+    (addFiles: (files: UserComposerAttachment[]) => void) => {
+      addFilesRef.current = addFiles;
+    },
+    [],
+  );
+
+  const handleGenericFilesDropped = useCallback(
+    async (items: DroppedItem[]) => {
+      if (!client || !isConnected) return;
+      const nonImageItems = items.filter((item) => {
+        if (item.kind === "web-file") return !isRasterImageFile(item.file);
+        return !isRasterImagePath(item.path);
+      });
+      if (nonImageItems.length === 0) return;
+      try {
+        const files = await Promise.all(
+          nonImageItems.map(async (item) => {
+            if (item.kind === "web-file") {
+              return {
+                fileName: item.file.name,
+                mimeType: item.file.type || getMimeTypeFromPath(item.file.name),
+                bytes: new Uint8Array(await item.file.arrayBuffer()),
+              };
+            }
+            const fileName = item.path.split("/").pop() ?? item.path.split("\\").pop() ?? item.path;
+            const bytes = await readDesktopFileBytes(item.path);
+            return { fileName, mimeType: getMimeTypeFromPath(item.path), bytes };
+          }),
+        );
+        const uploaded = await uploadFileAttachments({ client, files });
+        addFilesRef.current?.(uploaded);
+      } catch (error) {
+        console.error("[AgentPanel] Failed to upload dropped files:", error);
+        toastApi.error(error instanceof Error ? error.message : "Failed to upload file");
+      }
+    },
+    [client, isConnected, toastApi],
+  );
 
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
@@ -787,7 +851,7 @@ function ChatAgentContent({
     if (connectionStatus === "online") {
       if (reconnectToastArmedRef.current) {
         reconnectToastArmedRef.current = false;
-        panelToast.dismiss();
+        dismissToast();
       }
       return;
     }
@@ -796,12 +860,12 @@ function ChatAgentContent({
     }
     if (!reconnectToastArmedRef.current) {
       reconnectToastArmedRef.current = true;
-      panelToast.api.show("Reconnecting...", {
+      toastApi.show(t("agentPanel.states.reconnecting"), {
         durationMs: null,
         testID: "agent-reconnecting-toast",
       });
     }
-  }, [connectionStatus, panelToast]);
+  }, [connectionStatus, dismissToast, toastApi, t]);
 
   useEffect(() => {
     if (!isPaneFocused || !agentId || !isConnected || !hasSession) {
@@ -1013,6 +1077,7 @@ function ChatAgentContent({
   const nonReadyView = renderChatAgentNonReadyView({
     viewState,
     effectiveAgent,
+    t,
   });
   if (nonReadyView) return nonReadyView;
   invariant(agentId, "agent id is defined when agent content is ready");
@@ -1034,22 +1099,27 @@ function ChatAgentContent({
       effectiveAgent={effectiveAgent}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-      panelToast={panelToast}
+      toastApi={toastApi}
+      toast={toastState}
+      dismiss={dismissToast}
       streamViewRef={streamViewRef}
       animatedContentStyle={animatedContentStyle}
       handleFilesDropped={handleFilesDropped}
+      handleGenericFilesDropped={handleGenericFilesDropped}
       handleAddImagesCallback={handleAddImagesCallback}
+      handleAddFilesCallback={handleAddFilesCallback}
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
       showHistorySyncOverlay={showHistorySyncOverlay}
       cwd={agentCwd}
-      attentionController={attentionController}
+      onAttentionInputFocus={attentionController.clearOnInputFocus}
+      onAttentionPromptSend={attentionController.clearOnPromptSend}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
     />
   );
 }
 
-function ChatAgentReadyContent({
+const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   serverId,
   agentId,
   isPaneFocused,
@@ -1058,16 +1128,21 @@ function ChatAgentReadyContent({
   effectiveAgent,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
-  panelToast,
+  toastApi,
+  toast,
+  dismiss,
   streamViewRef,
   animatedContentStyle,
   handleFilesDropped,
+  handleGenericFilesDropped,
   handleAddImagesCallback,
+  handleAddFilesCallback,
   handleComposerHeightChange,
   handleMessageSent,
   showHistorySyncOverlay,
   cwd,
-  attentionController,
+  onAttentionInputFocus,
+  onAttentionPromptSend,
   onOpenWorkspaceFile,
 }: {
   serverId: string;
@@ -1078,24 +1153,46 @@ function ChatAgentReadyContent({
   effectiveAgent: AgentScreenAgent;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
-  panelToast: ReturnType<typeof useToastHost>;
+  toastApi: ToastApi;
+  toast: ToastState | null;
+  dismiss: () => void;
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   animatedContentStyle: object[];
   handleFilesDropped: (files: ImageAttachment[]) => void;
+  handleGenericFilesDropped: (items: DroppedItem[]) => void;
   handleAddImagesCallback: (addImages: (images: ImageAttachment[]) => void) => void;
+  handleAddFilesCallback: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
   showHistorySyncOverlay: boolean;
   cwd: string;
-  attentionController: ReturnType<typeof useAgentAttentionClear>;
+  onAttentionInputFocus: () => void;
+  onAttentionPromptSend: () => void;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
-  const agentInputDraft = useAgentInputDraft({
+  const { t } = useTranslation();
+  const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
       agentId,
     }),
   });
+  // Stabilize the agentInputDraft object identity so that memo(AgentComposerSection) can bail out
+  // when only toast state changes (which does not affect any draft field).
+  const { text, setText, attachments, setAttachments, clear, isHydrated, composerState } =
+    rawAgentInputDraft;
+  const agentInputDraft = useMemo(
+    (): AgentInputDraft => ({
+      text,
+      setText,
+      attachments,
+      setAttachments,
+      clear,
+      isHydrated,
+      composerState,
+    }),
+    [text, setText, attachments, setAttachments, clear, isHydrated, composerState],
+  );
   const streamSection = (
     <RenderProfile id={`AgentStreamSection:${agentId}`}>
       <AgentStreamSection
@@ -1105,7 +1202,7 @@ function ChatAgentReadyContent({
         agent={effectiveAgent}
         routeBottomAnchorRequest={routeBottomAnchorRequest}
         hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-        toast={panelToast.api}
+        toast={toastApi}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
       />
     </RenderProfile>
@@ -1121,9 +1218,10 @@ function ChatAgentReadyContent({
         cwd={cwd}
         isSubmitLoading={false}
         agentInputDraft={agentInputDraft}
-        onAttentionInputFocus={attentionController.clearOnInputFocus}
-        onAttentionPromptSend={attentionController.clearOnPromptSend}
+        onAttentionInputFocus={onAttentionInputFocus}
+        onAttentionPromptSend={onAttentionPromptSend}
         onAddImages={handleAddImagesCallback}
+        onAddFiles={handleAddFilesCallback}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
       />
@@ -1137,7 +1235,11 @@ function ChatAgentReadyContent({
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
       <View style={styles.root}>
-        <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
+        <FileDropZone
+          onFilesDropped={handleFilesDropped}
+          onGenericFilesDropped={handleGenericFilesDropped}
+          disabled={isArchivingCurrentAgent}
+        >
           <View style={styles.container}>
             {contentContainer}
 
@@ -1149,25 +1251,21 @@ function ChatAgentReadyContent({
               </View>
             ) : null}
 
-            <ToastViewport
-              toast={panelToast.toast}
-              onDismiss={panelToast.dismiss}
-              placement="panel"
-            />
+            <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
           </View>
         </FileDropZone>
 
         {isArchivingCurrentAgent ? (
           <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
             <ThemedActivityIndicator size="large" uniProps={foregroundColorMapping} />
-            <Text style={styles.archivingTitle}>Archiving agent...</Text>
-            <Text style={styles.archivingSubtitle}>Please wait while we archive this agent.</Text>
+            <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
+            <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
           </View>
         ) : null}
       </View>
     </RewindComposerRestoreProvider>
   );
-}
+});
 
 const AgentStreamSection = memo(function AgentStreamSection({
   streamViewRef,
@@ -1235,7 +1333,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   );
 });
 
-function AgentComposerSection({
+const AgentComposerSection = memo(function AgentComposerSection({
   agentId,
   serverId,
   isPaneFocused,
@@ -1247,6 +1345,7 @@ function AgentComposerSection({
   onAttentionInputFocus,
   onAttentionPromptSend,
   onAddImages,
+  onAddFiles,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1261,6 +1360,7 @@ function AgentComposerSection({
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
+  onAddFiles: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1285,11 +1385,12 @@ function AgentComposerSection({
       onAttentionInputFocus={onAttentionInputFocus}
       onAttentionPromptSend={onAttentionPromptSend}
       onAddImages={onAddImages}
+      onAddFiles={onAddFiles}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
     />
   );
-}
+});
 
 function ActiveAgentComposer({
   agentId,
@@ -1301,6 +1402,7 @@ function ActiveAgentComposer({
   onAttentionInputFocus,
   onAttentionPromptSend,
   onAddImages,
+  onAddFiles,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1313,11 +1415,16 @@ function ActiveAgentComposer({
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
+  onAddFiles: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
+    COMPACT_FORM_FACTOR_WIDTH,
+    { initialIsBelow: isCompactFormFactor },
+  );
   const paneContext = usePaneContext();
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();
@@ -1355,14 +1462,14 @@ function ActiveAgentComposer({
       };
       openFileExplorerForCheckout({
         checkout,
-        isCompact,
+        isCompact: isCompactFormFactor,
       });
       setExplorerTabForCheckout({
         ...checkout,
         tab: "changes",
       });
     },
-    [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
+    [isCompactFormFactor, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
   );
 
   const handleClientSlashCommand = useCallback(
@@ -1414,14 +1521,19 @@ function ActiveAgentComposer({
 
   const composerFooter = useMemo(
     () =>
-      isCompact ? (
-        <AgentModeControl serverId={serverId} agentId={agentId} placement="footer" />
+      isCompactComposerLayout ? (
+        <AgentModeControl
+          serverId={serverId}
+          agentId={agentId}
+          placement="footer"
+          isCompactLayout={isCompactComposerLayout}
+        />
       ) : undefined,
-    [isCompact, serverId, agentId],
+    [isCompactComposerLayout, serverId, agentId],
   );
 
   return (
-    <ReanimatedAnimated.View style={inputAreaStyle}>
+    <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
@@ -1445,10 +1557,12 @@ function ActiveAgentComposer({
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
         onAddImages={onAddImages}
+        onAddFiles={onAddFiles}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
         footer={composerFooter}
+        isCompactLayout={isCompactComposerLayout}
       />
     </ReanimatedAnimated.View>
   );
@@ -1459,22 +1573,22 @@ function AgentSessionUnavailableState({
   connectionStatus,
   lastError,
   isUnknownDaemon = false,
+  t,
 }: {
   serverLabel: string;
   connectionStatus: HostRuntimeConnectionStatus;
   lastError: string | null;
   isUnknownDaemon?: boolean;
+  t: TFunction;
 }) {
   if (isUnknownDaemon) {
     return (
       <View style={styles.container}>
         <View style={styles.centerState}>
           <Text style={styles.errorText}>
-            Cannot open this agent because {serverLabel} is not configured on this device.
+            {t("agentPanel.unavailable.unknownHost", { serverLabel })}
           </Text>
-          <Text style={styles.statusText}>
-            Add the host in Settings or open an agent on a configured server to continue.
-          </Text>
+          <Text style={styles.statusText}>{t("agentPanel.unavailable.addHost")}</Text>
         </View>
       </View>
     );
@@ -1491,20 +1605,22 @@ function AgentSessionUnavailableState({
             <ActivityIndicator size="large" />
             <Text style={styles.loadingText}>
               {isPreparingSession
-                ? `Preparing ${serverLabel} session...`
-                : `Connecting to ${serverLabel}...`}
+                ? t("agentPanel.unavailable.preparingSession", { serverLabel })
+                : t("agentPanel.unavailable.connecting", { serverLabel })}
             </Text>
             <Text style={styles.statusText}>
               {isPreparingSession
-                ? "We will show this agent in a moment."
-                : "We will show this agent once the host is online."}
+                ? t("agentPanel.unavailable.showSoon")
+                : t("agentPanel.unavailable.showWhenOnline")}
             </Text>
           </>
         ) : (
           <>
-            <Text style={styles.offlineTitle}>Reconnecting to {serverLabel}...</Text>
+            <Text style={styles.offlineTitle}>
+              {t("agentPanel.unavailable.reconnectingTo", { serverLabel })}
+            </Text>
             <Text style={styles.offlineDescription}>
-              We will show this agent again as soon as the host is reachable.
+              {t("agentPanel.unavailable.showAgainWhenReachable")}
             </Text>
             {lastError ? <Text style={styles.offlineDetails}>{lastError}</Text> : null}
           </>

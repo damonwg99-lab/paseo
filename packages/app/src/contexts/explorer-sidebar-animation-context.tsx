@@ -5,12 +5,20 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { useWindowDimensions } from "react-native";
-import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
+import {
+  runOnJS,
+  useSharedValue,
+  withTiming,
+  Easing,
+  type SharedValue,
+} from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getRightSidebarAnimationTargets,
@@ -25,6 +33,7 @@ interface ExplorerSidebarAnimationContextValue {
   windowWidth: number;
   animateToOpen: () => void;
   animateToClose: () => void;
+  settledGeneration: number;
   isGesturing: SharedValue<boolean>;
   gestureAnimatingRef: React.MutableRefObject<boolean>;
   openGestureRef: React.MutableRefObject<GestureType | undefined>;
@@ -36,8 +45,10 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
 );
 
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
+  const { startMobilePanelTransition, settleMobilePanel } = useSidebarAnimation();
   const { width: windowWidth } = useWindowDimensions();
   const isCompactLayout = useIsCompactFormFactor();
+  const mobileView = usePanelStore((state) => state.mobileView);
   const isOpen = usePanelStore((state) =>
     selectIsFileExplorerOpen(state, { isCompact: isCompactLayout }),
   );
@@ -51,8 +62,16 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
   const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
+  // Same Fabric stale-props revert protection as in sidebar-animation-context:
+  // bump after every settle so consumers re-commit the settled shared values.
+  const [settledGeneration, setSettledGeneration] = useState(0);
+  const bumpSettledGeneration = useCallback(() => {
+    setSettledGeneration((generation) => generation + 1);
+  }, []);
+
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
+  const prevMobileView = useRef(mobileView);
   const prevWindowWidth = useRef(windowWidth);
 
   // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close)
@@ -63,11 +82,16 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       previousWindowWidth: prevWindowWidth.current,
       nextWindowWidth: windowWidth,
     });
+    const didMobileViewChange = prevMobileView.current !== mobileView;
     const previousIsOpen = prevIsOpen.current;
+    const previousMobileView = prevMobileView.current;
+    const ownsMobileViewChange =
+      previousMobileView === "file-explorer" || mobileView === "file-explorer";
     prevIsOpen.current = isOpen;
+    prevMobileView.current = mobileView;
     prevWindowWidth.current = windowWidth;
 
-    if (!didStateChange) {
+    if (!didStateChange && !didMobileViewChange) {
       return;
     }
 
@@ -84,10 +108,48 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     const targets = getRightSidebarAnimationTargets({ isOpen, windowWidth });
 
     if (previousIsOpen !== isOpen) {
-      translateX.value = withTiming(targets.translateX, {
-        duration: ANIMATION_DURATION,
-        easing: ANIMATION_EASING,
-      });
+      if (isOpen) {
+        if (isCompactLayout) {
+          startMobilePanelTransition("file-explorer");
+        }
+        translateX.value = withTiming(
+          targets.translateX,
+          {
+            duration: ANIMATION_DURATION,
+            easing: ANIMATION_EASING,
+          },
+          (finished) => {
+            if (!finished) return;
+            if (isCompactLayout) {
+              settleMobilePanel("file-explorer");
+            }
+            runOnJS(bumpSettledGeneration)();
+          },
+        );
+        backdropOpacity.value = withTiming(targets.backdropOpacity, {
+          duration: ANIMATION_DURATION,
+          easing: ANIMATION_EASING,
+        });
+        return;
+      }
+
+      if (isCompactLayout && mobileView === "agent") {
+        startMobilePanelTransition("agent");
+      }
+      translateX.value = withTiming(
+        targets.translateX,
+        {
+          duration: ANIMATION_DURATION,
+          easing: ANIMATION_EASING,
+        },
+        (finished) => {
+          if (!finished) return;
+          if (isCompactLayout && mobileView === "agent") {
+            settleMobilePanel("agent");
+          }
+          runOnJS(bumpSettledGeneration)();
+        },
+      );
       backdropOpacity.value = withTiming(targets.backdropOpacity, {
         duration: ANIMATION_DURATION,
         easing: ANIMATION_EASING,
@@ -97,31 +159,77 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-  }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
+    if (isCompactLayout && ownsMobileViewChange) {
+      settleMobilePanel(mobileView);
+    }
+    bumpSettledGeneration();
+  }, [
+    isOpen,
+    mobileView,
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    isGesturing,
+    isCompactLayout,
+    startMobilePanelTransition,
+    settleMobilePanel,
+    bumpSettledGeneration,
+  ]);
 
   const animateToOpen = useCallback(() => {
     "worklet";
-    translateX.value = withTiming(0, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
+    startMobilePanelTransition("file-explorer");
+    translateX.value = withTiming(
+      0,
+      {
+        duration: ANIMATION_DURATION,
+        easing: ANIMATION_EASING,
+      },
+      (finished) => {
+        if (!finished) return;
+        settleMobilePanel("file-explorer");
+        runOnJS(bumpSettledGeneration)();
+      },
+    );
     backdropOpacity.value = withTiming(1, {
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  }, [translateX, backdropOpacity]);
+  }, [
+    translateX,
+    backdropOpacity,
+    startMobilePanelTransition,
+    settleMobilePanel,
+    bumpSettledGeneration,
+  ]);
 
   const animateToClose = useCallback(() => {
     "worklet";
-    translateX.value = withTiming(windowWidth, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
+    startMobilePanelTransition("agent");
+    translateX.value = withTiming(
+      windowWidth,
+      {
+        duration: ANIMATION_DURATION,
+        easing: ANIMATION_EASING,
+      },
+      (finished) => {
+        if (!finished) return;
+        settleMobilePanel("agent");
+        runOnJS(bumpSettledGeneration)();
+      },
+    );
     backdropOpacity.value = withTiming(0, {
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  }, [translateX, backdropOpacity, windowWidth]);
+  }, [
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    startMobilePanelTransition,
+    settleMobilePanel,
+    bumpSettledGeneration,
+  ]);
 
   const value = useMemo<ExplorerSidebarAnimationContextValue>(
     () => ({
@@ -130,12 +238,21 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       windowWidth,
       animateToOpen,
       animateToClose,
+      settledGeneration,
       isGesturing,
       gestureAnimatingRef,
       openGestureRef,
       closeGestureRef,
     }),
-    [translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing],
+    [
+      translateX,
+      backdropOpacity,
+      windowWidth,
+      animateToOpen,
+      animateToClose,
+      settledGeneration,
+      isGesturing,
+    ],
   );
 
   return (

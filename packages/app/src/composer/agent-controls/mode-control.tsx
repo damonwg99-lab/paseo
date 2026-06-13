@@ -7,6 +7,7 @@ import {
   type ComponentType,
   type ReactElement,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
@@ -108,6 +109,7 @@ function AgentModeControlView({
   disabled = false,
 }: AgentModeControlViewProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const anchorRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -182,14 +184,14 @@ function AgentModeControlView({
 
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
-      title: "Mode",
+      title: t("agentControls.mode.title"),
       search: {
         onChange: setSearchQuery,
-        placeholder: "Search modes...",
+        placeholder: t("agentControls.mode.searchPlaceholder"),
         testID: "mode-search-input",
       },
     }),
-    [],
+    [t],
   );
 
   if (!selectedMode) return null;
@@ -203,7 +205,9 @@ function AgentModeControlView({
         onPress={handlePress}
         style={pressableStyle}
         accessibilityRole="button"
-        accessibilityLabel={`Select agent mode (${selectedModeLabel})`}
+        accessibilityLabel={t("agentControls.mode.selectWithValue", {
+          value: selectedModeLabel,
+        })}
         testID="mode-control"
       >
         {Icon ? <Icon size={theme.iconSize.md} color={iconColor} /> : null}
@@ -235,14 +239,17 @@ interface AgentModeControlProps {
   serverId: string;
   agentId: string;
   placement: AgentModeControlPlacement;
+  isCompactLayout?: boolean;
 }
 
 export const AgentModeControl = memo(function AgentModeControl({
   serverId,
   agentId,
   placement,
+  isCompactLayout,
 }: AgentModeControlProps) {
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
   const slice = useSessionStore(
     useShallow((state) => {
       const agent = state.sessions[serverId]?.agents?.get(agentId);
@@ -303,6 +310,7 @@ export interface DraftAgentModeControlProps {
   onSelectMode: (modeId: string) => void;
   disabled?: boolean;
   placement: AgentModeControlPlacement;
+  isCompactLayout?: boolean;
 }
 
 export function DraftAgentModeControl({
@@ -313,8 +321,10 @@ export function DraftAgentModeControl({
   onSelectMode,
   disabled,
   placement,
+  isCompactLayout,
 }: DraftAgentModeControlProps) {
-  const isCompact = useIsCompactFormFactor();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompact = isCompactLayout ?? isCompactFormFactor;
   if (!selectedProvider || modeOptions.length === 0) return null;
   if (!shouldRenderForPlacement(placement, isCompact)) return null;
   return (

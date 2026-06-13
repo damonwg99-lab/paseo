@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   View,
@@ -25,9 +26,9 @@ import {
   type ViewStyle,
   type TextStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { BORDER_WIDTH, ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
+import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import {
   AlignJustify,
   Archive,
@@ -55,10 +56,10 @@ import {
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
+import { useAppSettings } from "@/hooks/use-settings";
 import { DiffScroll } from "@/components/diff-scroll";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { shouldAnchorHeaderBeforeCollapse } from "@/git/diff-scroll";
 import {
   buildSplitDiffRows,
@@ -100,11 +101,10 @@ import {
 import {
   buildReviewDraftScopeKey,
   buildReviewDraftKey,
-  useActiveReviewDraftMode,
   useReviewAttachmentSnapshot,
-  useSetActiveReviewDraftMode,
+  useResolvedDiffMode,
+  useSetDiffModeOverride,
   type ReviewDraftComment,
-  type ReviewDraftMode,
   getInlineReviewThreadState,
   getSplitInlineReviewThreadState,
   InlineReviewGutterCell,
@@ -123,6 +123,7 @@ function fileHeaderPressableStyle({ pressed }: PressableStateCallbackType) {
 interface HighlightedTextProps {
   tokens: HighlightToken[];
   wrapLines?: boolean;
+  testID?: string;
 }
 
 type WrappedWebTextStyle = TextStyle & {
@@ -143,13 +144,10 @@ function HighlightedToken({ token }: { token: HighlightToken }) {
   return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
 }
 
-function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
-  const { theme } = useUnistyles();
-  const lineHeight = theme.lineHeight.diff;
-
+function HighlightedText({ tokens, wrapLines = false, testID }: HighlightedTextProps) {
   const containerStyle = useMemo(
-    () => [styles.diffLineText, { lineHeight, ...getWrappedTextStyle(wrapLines) }],
-    [lineHeight, wrapLines],
+    () => [styles.diffTextMetrics, styles.diffLineText, getWrappedTextStyle(wrapLines)],
+    [wrapLines],
   );
 
   const keyedTokens = useMemo(
@@ -158,7 +156,7 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
   );
 
   return (
-    <Text style={containerStyle}>
+    <Text style={containerStyle} testID={testID}>
       {keyedTokens.map(({ key, token }) => (
         <HighlightedToken key={key} token={token} />
       ))}
@@ -252,6 +250,8 @@ function DiffGutterCell({
   reviewActions,
   isLineHovered,
   style,
+  textTestID,
+  actionTestID,
 }: {
   lineNumber: number | null;
   type: DiffLine["type"] | undefined | null;
@@ -260,6 +260,8 @@ function DiffGutterCell({
   reviewActions?: InlineReviewActions;
   isLineHovered?: boolean;
   style?: StyleProp<ViewStyle>;
+  textTestID?: string;
+  actionTestID?: string;
 }) {
   const containerStyle = useMemo(
     () => [
@@ -272,6 +274,7 @@ function DiffGutterCell({
   );
   const textStyle = useMemo(
     () => [
+      styles.diffTextMetrics,
       styles.lineNumberText,
       type === "add" && styles.addLineNumberText,
       type === "remove" && styles.removeLineNumberText,
@@ -296,8 +299,9 @@ function DiffGutterCell({
       isLineHovered={isLineHovered}
       onStartComment={onStartComment}
       style={containerStyle}
+      actionTestID={actionTestID}
     >
-      <Text numberOfLines={1} style={textStyle}>
+      <Text numberOfLines={1} style={textStyle} testID={textTestID}>
         {formatDiffGutterText(lineNumber)}
       </Text>
     </InlineReviewGutterCell>
@@ -312,6 +316,7 @@ function DiffTextLine({
   onHoverChange,
   hoverTargetKey,
   onHoverTargetChange,
+  textTestID,
 }: {
   line: DiffLine;
   wrapLines: boolean;
@@ -320,6 +325,7 @@ function DiffTextLine({
   onHoverChange?: (hovered: boolean) => void;
   hoverTargetKey?: string | null;
   onHoverTargetChange?: (key: string | null) => void;
+  textTestID?: string;
 }) {
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
@@ -329,6 +335,7 @@ function DiffTextLine({
   );
   const textStyle = useMemo(
     () => [
+      styles.diffTextMetrics,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line.type === "add" && styles.addLineText,
@@ -349,9 +356,11 @@ function DiffTextLine({
       style={containerStyle}
     >
       {line.type !== "header" && visibleTokens ? (
-        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} testID={textTestID} />
       ) : (
-        <Text style={textStyle}>{formatDiffContentText(line.content)}</Text>
+        <Text style={textStyle} testID={textTestID}>
+          {formatDiffContentText(line.content)}
+        </Text>
       )}
     </LongPressableLine>
   );
@@ -380,6 +389,7 @@ function SplitTextLine({
   );
   const textStyle = useMemo(
     () => [
+      styles.diffTextMetrics,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line?.type === "add" && styles.addLineText,
@@ -432,6 +442,7 @@ function DiffLineView({
   );
   const textStyle = useMemo(
     () => [
+      styles.diffTextMetrics,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line.type === "add" && styles.addLineText,
@@ -487,6 +498,7 @@ function SplitDiffLine({
   );
   const textStyle = useMemo(
     () => [
+      styles.diffTextMetrics,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line?.type === "add" && styles.addLineText,
@@ -800,6 +812,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
+  const { t } = useTranslation();
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
@@ -870,12 +883,12 @@ const DiffFileHeader = memo(function DiffFileHeader({
               </Text>
               {file.isNew && (
                 <View style={styles.newBadge}>
-                  <Text style={styles.newBadgeText}>New</Text>
+                  <Text style={styles.newBadgeText}>{t("workspace.git.diff.newFile")}</Text>
                 </View>
               )}
               {file.isDeleted && (
                 <View style={styles.deletedBadge}>
-                  <Text style={styles.deletedBadgeText}>Deleted</Text>
+                  <Text style={styles.deletedBadgeText}>{t("workspace.git.diff.deletedFile")}</Text>
                 </View>
               )}
             </View>
@@ -896,6 +909,7 @@ function DiffFileBody({
   file,
   layout,
   wrapLines,
+  codeFontSize,
   reviewActions,
   onBodyHeightChange,
   testID,
@@ -903,6 +917,7 @@ function DiffFileBody({
   file: ParsedDiffFile;
   layout: "unified" | "split";
   wrapLines: boolean;
+  codeFontSize: number;
   reviewActions?: InlineReviewActions;
   onBodyHeightChange?: (file: ParsedDiffFile, height: number) => void;
   testID?: string;
@@ -910,7 +925,7 @@ function DiffFileBody({
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
   const [hoveredReviewTargetKey, setHoveredReviewTargetKey] = useState<string | null>(null);
-  const { theme } = useUnistyles();
+  const { t } = useTranslation();
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -936,7 +951,9 @@ function DiffFileBody({
           return (
             <View style={styles.statusMessageContainer}>
               <Text style={styles.statusMessageText}>
-                {file.status === "binary" ? "Binary file" : "Diff too large to display"}
+                {file.status === "binary"
+                  ? t("workspace.git.diff.binaryFile")
+                  : t("workspace.git.diff.tooLarge")}
               </Text>
             </View>
           );
@@ -950,7 +967,7 @@ function DiffFileBody({
             hunk.newStart + hunk.newCount,
           );
         }
-        const gutterWidth = lineNumberGutterWidth(maxLineNo, theme.fontSize.code);
+        const gutterWidth = lineNumberGutterWidth(maxLineNo, codeFontSize);
 
         if (layout === "split") {
           const rows = buildSplitDiffRows(file);
@@ -981,8 +998,8 @@ function DiffFileBody({
           return (
             <View style={styles.diffContent} dataSet={CODE_SURFACE_DATASET}>
               <View style={styles.linesContainer}>
-                {computedLines.map(({ line, lineNumber, key, reviewTarget }) => (
-                  <View key={key}>
+                {computedLines.map(({ line, lineNumber, key, reviewTarget }, index) => (
+                  <View key={key} testID={`diff-wrapped-row-${index}`}>
                     <DiffLineView
                       line={line}
                       lineNumber={lineNumber}
@@ -1008,8 +1025,8 @@ function DiffFileBody({
         return (
           <View style={DIFF_CONTENT_ROW_STYLE} dataSet={CODE_SURFACE_DATASET}>
             <View style={styles.gutterColumn}>
-              {computedLines.map(({ line, lineNumber, key, reviewTarget }) => (
-                <View key={key}>
+              {computedLines.map(({ line, lineNumber, key, reviewTarget }, index) => (
+                <View key={key} testID={`diff-gutter-row-${index}`}>
                   <DiffGutterCell
                     lineNumber={lineNumber}
                     type={line.type}
@@ -1019,6 +1036,8 @@ function DiffFileBody({
                     isLineHovered={
                       reviewTarget?.key !== undefined && hoveredReviewTargetKey === reviewTarget.key
                     }
+                    textTestID={`diff-gutter-text-${index}`}
+                    actionTestID={`diff-gutter-action-${index}`}
                   />
                   <InlineReviewGutterSpacer
                     reviewTarget={reviewTarget}
@@ -1035,8 +1054,8 @@ function DiffFileBody({
               contentContainerStyle={styles.diffContentInner}
             >
               <View style={linesContainerRowStyle}>
-                {computedLines.map(({ line, key, reviewTarget }) => (
-                  <View key={key}>
+                {computedLines.map(({ line, key, reviewTarget }, index) => (
+                  <View key={key} testID={`diff-code-row-${index}`}>
                     <DiffTextLine
                       line={line}
                       wrapLines={false}
@@ -1044,6 +1063,7 @@ function DiffFileBody({
                       reviewActions={reviewActions}
                       hoverTargetKey={reviewTarget?.key ?? null}
                       onHoverTargetChange={setHoveredReviewTargetKey}
+                      textTestID={`diff-code-text-${index}`}
                     />
                     <InlineReviewThreadContent
                       reviewTarget={reviewTarget}
@@ -1074,6 +1094,27 @@ type PressableStyleFn = (
   state: PressableStateCallbackType & { hovered?: boolean; open?: boolean },
 ) => StyleProp<ViewStyle>;
 
+const foregroundIconColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedAlignJustify = withUnistyles(AlignJustify);
+const ThemedColumns2 = withUnistyles(Columns2);
+const ThemedPilcrow = withUnistyles(Pilcrow);
+const ThemedWrapText = withUnistyles(WrapText);
+const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
+const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
+const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
+const ThemedDownload = withUnistyles(Download);
+const ThemedUpload = withUnistyles(Upload);
+const ThemedArrowDownUp = withUnistyles(ArrowDownUp);
+const ThemedGitHubIcon = withUnistyles(GitHubIcon);
+const ThemedGitMerge = withUnistyles(GitMerge);
+const ThemedRefreshCcw = withUnistyles(RefreshCcw);
+const ThemedArchive = withUnistyles(Archive);
+const ThemedGitBranch = withUnistyles(GitBranch);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+
 interface DiffLayoutToggleGroupProps {
   layout: "unified" | "split";
   unifiedToggleStyle: PressableStyleFn;
@@ -1089,45 +1130,51 @@ function DiffLayoutToggleGroup({
   onUnified,
   onSplit,
 }: DiffLayoutToggleGroupProps) {
-  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const unifiedLabel = t("workspace.git.diff.unified");
+  const splitLabel = t("workspace.git.diff.split");
   return (
     <View style={styles.toggleButtonGroup}>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Unified diff"
+            accessibilityLabel={unifiedLabel}
             testID="changes-layout-unified"
             onPress={onUnified}
             style={unifiedToggleStyle}
           >
-            <AlignJustify
+            <ThemedAlignJustify
               size={14}
-              color={layout === "unified" ? theme.colors.foreground : theme.colors.foregroundMuted}
+              uniProps={
+                layout === "unified" ? foregroundIconColorMapping : foregroundMutedIconColorMapping
+              }
             />
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>Unified diff</Text>
+          <Text style={styles.tooltipText}>{unifiedLabel}</Text>
         </TooltipContent>
       </Tooltip>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Side-by-side diff"
+            accessibilityLabel={splitLabel}
             testID="changes-layout-split"
             onPress={onSplit}
             style={splitToggleStyle}
           >
-            <Columns2
+            <ThemedColumns2
               size={14}
-              color={layout === "split" ? theme.colors.foreground : theme.colors.foregroundMuted}
+              uniProps={
+                layout === "split" ? foregroundIconColorMapping : foregroundMutedIconColorMapping
+              }
             />
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>Side-by-side diff</Text>
+          <Text style={styles.tooltipText}>{splitLabel}</Text>
         </TooltipContent>
       </Tooltip>
     </View>
@@ -1147,25 +1194,26 @@ function DiffWhitespaceToggle({
   toggleStyle,
   onToggle,
 }: DiffWhitespaceToggleProps) {
-  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const label = t("workspace.git.diff.hideWhitespace");
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Hide whitespace"
+          accessibilityLabel={label}
           testID="changes-toggle-whitespace"
           style={toggleStyle}
           onPress={onToggle}
         >
-          <Pilcrow
+          <ThemedPilcrow
             size={isMobile ? 18 : 14}
-            color={hideWhitespace ? theme.colors.foreground : theme.colors.foregroundMuted}
+            uniProps={hideWhitespace ? foregroundIconColorMapping : foregroundMutedIconColorMapping}
           />
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>Hide whitespace</Text>
+        <Text style={styles.tooltipText}>{label}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -1190,38 +1238,46 @@ function DiffFilesToolbar({
   onToggleWrapLines,
   onToggleExpandAll,
 }: DiffFilesToolbarProps) {
-  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const wrapLinesLabel = wrapLines
+    ? t("workspace.git.diff.scrollLongLines")
+    : t("workspace.git.diff.wrapLongLines");
+  const expandAllLabel = allExpanded
+    ? t("workspace.git.diff.collapseAll")
+    : t("workspace.git.diff.expandAll");
   return (
     <View style={styles.diffStatusButtons}>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable style={wrapLinesToggleStyle} onPress={onToggleWrapLines}>
-            <WrapText
+            <ThemedWrapText
               size={isMobile ? 18 : 14}
-              color={wrapLines ? theme.colors.foreground : theme.colors.foregroundMuted}
+              uniProps={wrapLines ? foregroundIconColorMapping : foregroundMutedIconColorMapping}
             />
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>
-            {wrapLines ? "Scroll long lines" : "Wrap long lines"}
-          </Text>
+          <Text style={styles.tooltipText}>{wrapLinesLabel}</Text>
         </TooltipContent>
       </Tooltip>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable style={expandAllToggleStyle} onPress={onToggleExpandAll}>
             {allExpanded ? (
-              <ListChevronsDownUp size={isMobile ? 18 : 14} color={theme.colors.foregroundMuted} />
+              <ThemedListChevronsDownUp
+                size={isMobile ? 18 : 14}
+                uniProps={foregroundMutedIconColorMapping}
+              />
             ) : (
-              <ListChevronsUpDown size={isMobile ? 18 : 14} color={theme.colors.foregroundMuted} />
+              <ThemedListChevronsUpDown
+                size={isMobile ? 18 : 14}
+                uniProps={foregroundMutedIconColorMapping}
+              />
             )}
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>
-            {allExpanded ? "Collapse all files" : "Expand all files"}
-          </Text>
+          <Text style={styles.tooltipText}>{expandAllLabel}</Text>
         </TooltipContent>
       </Tooltip>
     </View>
@@ -1236,15 +1292,18 @@ interface DiffRefreshButtonProps {
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const refreshIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 function DiffRefreshButton({ isRefreshing, toggleStyle, onPress }: DiffRefreshButtonProps) {
+  const { t } = useTranslation();
+  const refreshLabel = t("workspace.git.diff.refresh");
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={isRefreshing ? "Refreshing" : "Refresh git and GitHub state"}
+          accessibilityLabel={
+            isRefreshing ? t("workspace.git.diff.refreshing") : t("workspace.git.diff.refreshState")
+          }
           testID="changes-refresh"
           style={toggleStyle}
           onPress={onPress}
@@ -1252,15 +1311,18 @@ function DiffRefreshButton({ isRefreshing, toggleStyle, onPress }: DiffRefreshBu
         >
           <View style={styles.refreshIcon}>
             {isRefreshing ? (
-              <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={refreshIconColorMapping} />
+              <ThemedLoadingSpinner
+                size={ICON_SIZE.sm}
+                uniProps={foregroundMutedIconColorMapping}
+              />
             ) : (
-              <ThemedRotateCw size={ICON_SIZE.sm} uniProps={refreshIconColorMapping} />
+              <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedIconColorMapping} />
             )}
           </View>
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>Refresh</Text>
+        <Text style={styles.tooltipText}>{refreshLabel}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -1293,14 +1355,19 @@ function computeEmptyMessage(
   hideWhitespace: boolean,
   diffMode: "uncommitted" | "base",
   baseRefLabel: string,
+  labels: {
+    hiddenWhitespace: string;
+    uncommitted: string;
+    againstBase: (baseRefLabel: string) => string;
+  },
 ): string {
   if (hideWhitespace) {
-    return "No visible changes after hiding whitespace";
+    return labels.hiddenWhitespace;
   }
   if (diffMode === "uncommitted") {
-    return "No uncommitted changes";
+    return labels.uncommitted;
   }
-  return `No changes vs ${baseRefLabel}`;
+  return labels.againstBase(baseRefLabel);
 }
 
 interface DiffBodyContentProps {
@@ -1322,7 +1389,8 @@ interface DiffBodyContentProps {
   handleDiffListScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onContentSizeChange: (width: number, height: number) => void;
   showDesktopWebScrollbar: boolean;
-  foregroundMutedColor: string;
+  checkingRepositoryLabel: string;
+  notRepositoryLabel: string;
 }
 
 function DiffBodyContent({
@@ -1344,13 +1412,14 @@ function DiffBodyContent({
   handleDiffListScroll,
   onContentSizeChange,
   showDesktopWebScrollbar,
-  foregroundMutedColor,
+  checkingRepositoryLabel,
+  notRepositoryLabel,
 }: DiffBodyContentProps) {
   if (isStatusLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={foregroundMutedColor} />
-        <Text style={styles.loadingText}>Checking repository...</Text>
+        <ThemedActivityIndicator size="large" uniProps={foregroundMutedIconColorMapping} />
+        <Text style={styles.loadingText}>{checkingRepositoryLabel}</Text>
       </View>
     );
   }
@@ -1364,14 +1433,14 @@ function DiffBodyContent({
   if (notGit) {
     return (
       <View style={styles.emptyContainer} testID="changes-not-git">
-        <Text style={styles.emptyText}>Not a git repository</Text>
+        <Text style={styles.emptyText}>{notRepositoryLabel}</Text>
       </View>
     );
   }
   if (isDiffLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={foregroundMutedColor} />
+        <ThemedActivityIndicator size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
   }
@@ -1459,8 +1528,8 @@ function deriveStatusState({
   };
 }
 
-function computeBaseRefLabel(baseRef: string | undefined): string {
-  if (!baseRef) return "base";
+function computeBaseRefLabel(baseRef: string | undefined, fallbackLabel: string): string {
+  if (!baseRef) return fallbackLabel;
   const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
   return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
 }
@@ -1483,30 +1552,27 @@ function computePrErrorMessage(
   return prPayloadError?.message ?? null;
 }
 
-function buildDiffModeTriggerStyle(surfaceColor: string): PressableStyleFn {
+function buildDiffModeTriggerStyle(): PressableStyleFn {
   return ({ hovered, pressed, open }) => [
     styles.diffModeTrigger,
-    (Boolean(hovered) || pressed || Boolean(open)) &&
-      inlineUnistylesStyle({ backgroundColor: surfaceColor }),
+    (Boolean(hovered) || pressed || Boolean(open)) && styles.diffModeTriggerHovered,
   ];
 }
 
-function buildExpandAllButtonStyle(surfaceColor: string): PressableStyleFn {
+function buildExpandAllButtonStyle(): PressableStyleFn {
   return ({ hovered, pressed }) => [
     styles.expandAllButton,
-    (Boolean(hovered) || pressed) && inlineUnistylesStyle({ backgroundColor: surfaceColor }),
+    (Boolean(hovered) || pressed) && styles.toggleButtonSelected,
   ];
 }
 
 function buildToggleButtonStyle(
   selected: boolean,
   baseStyles: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
-  surfaceColor: string,
 ): PressableStyleFn {
   return ({ hovered, pressed }) => [
     baseStyles,
-    (selected || Boolean(hovered) || pressed) &&
-      inlineUnistylesStyle({ backgroundColor: surfaceColor }),
+    (selected || Boolean(hovered) || pressed) && styles.toggleButtonSelected,
   ];
 }
 
@@ -1521,11 +1587,11 @@ export function GitDiffPane({
   hideHeaderRow,
   enabled,
 }: GitDiffPaneProps) {
-  const { theme } = useUnistyles();
+  const { settings: appSettings } = useAppSettings();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
   const canUseSplitLayout = isWeb && !isMobile;
-  const [diffModeOverride, setDiffModeOverride] = useState<ReviewDraftMode | null>(null);
   const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
     useChangesPreferences();
   const wrapLines = changesPreferences.wrapLines;
@@ -1546,9 +1612,6 @@ export function GitDiffPane({
     void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
   }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
 
-  // handleSelectUncommitted/handleSelectBase are defined later, after reviewDraftScopeKey
-  // and setActiveReviewMode are available, so they can record the active review mode.
-
   const handleLayoutUnified = useCallback(() => {
     handleLayoutChange("unified");
   }, [handleLayoutChange]);
@@ -1557,56 +1620,44 @@ export function GitDiffPane({
     handleLayoutChange("split");
   }, [handleLayoutChange]);
 
-  const controlSurfaceColor = theme.colors.surface2;
-  const diffModeTriggerStyle = useMemo(
-    () => buildDiffModeTriggerStyle(controlSurfaceColor),
-    [controlSurfaceColor],
+  const codeFontSize = appSettings.codeFontSize;
+  const diffBodyLineHeight = Math.round(codeFontSize * 1.5);
+  const diffBodyTypographyKey = [appSettings.monoFontFamily, codeFontSize, diffBodyLineHeight].join(
+    ":",
   );
+  const diffModeTriggerStyle = useMemo(() => buildDiffModeTriggerStyle(), []);
 
   const unifiedToggleStyle = useMemo(
     () =>
-      buildToggleButtonStyle(
-        changesPreferences.layout === "unified",
-        [styles.toggleButton, styles.toggleButtonGroupStart],
-        controlSurfaceColor,
-      ),
-    [changesPreferences.layout, controlSurfaceColor],
+      buildToggleButtonStyle(changesPreferences.layout === "unified", [
+        styles.toggleButton,
+        styles.toggleButtonGroupStart,
+      ]),
+    [changesPreferences.layout],
   );
 
   const splitToggleStyle = useMemo(
     () =>
-      buildToggleButtonStyle(
-        changesPreferences.layout === "split",
-        [styles.toggleButton, styles.toggleButtonGroupEnd],
-        controlSurfaceColor,
-      ),
-    [changesPreferences.layout, controlSurfaceColor],
+      buildToggleButtonStyle(changesPreferences.layout === "split", [
+        styles.toggleButton,
+        styles.toggleButtonGroupEnd,
+      ]),
+    [changesPreferences.layout],
   );
 
   const hideWhitespaceToggleStyle = useMemo(
-    () =>
-      buildToggleButtonStyle(
-        changesPreferences.hideWhitespace,
-        styles.expandAllButton,
-        controlSurfaceColor,
-      ),
-    [changesPreferences.hideWhitespace, controlSurfaceColor],
+    () => buildToggleButtonStyle(changesPreferences.hideWhitespace, styles.expandAllButton),
+    [changesPreferences.hideWhitespace],
   );
 
   const wrapLinesToggleStyle = useMemo(
-    () => buildToggleButtonStyle(wrapLines, styles.expandAllButton, controlSurfaceColor),
-    [wrapLines, controlSurfaceColor],
+    () => buildToggleButtonStyle(wrapLines, styles.expandAllButton),
+    [wrapLines],
   );
 
-  const expandAllToggleStyle = useMemo(
-    () => buildExpandAllButtonStyle(controlSurfaceColor),
-    [controlSurfaceColor],
-  );
+  const expandAllToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
-  const refreshToggleStyle = useMemo(
-    () => buildExpandAllButtonStyle(controlSurfaceColor),
-    [controlSurfaceColor],
-  );
+  const refreshToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
   const toast = useToast();
   const refreshSupported = useSessionStore(
@@ -1622,9 +1673,9 @@ export function GitDiffPane({
       return;
     }
     void runRefresh({ serverId, cwd }).catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to refresh git state.");
+      toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [cwd, isRefreshing, runRefresh, serverId, toast]);
+  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
 
   const {
     status,
@@ -1635,8 +1686,6 @@ export function GitDiffPane({
   const statusState = deriveStatusState({ status, isStatusLoading, isStatusError, statusError });
   const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges } = statusState;
 
-  // Auto-select diff mode based on state: uncommitted when dirty, base when clean
-  const autoDiffMode: ReviewDraftMode = hasUncommittedChanges ? "uncommitted" : "base";
   const reviewDraftScopeKey = useMemo(
     () =>
       buildReviewDraftScopeKey({
@@ -1648,8 +1697,11 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, serverId, workspaceId],
   );
-  const activeReviewMode = useActiveReviewDraftMode({ scopeKey: reviewDraftScopeKey });
-  const diffMode = diffModeOverride ?? activeReviewMode ?? autoDiffMode;
+  const diffMode = useResolvedDiffMode({
+    scopeKey: reviewDraftScopeKey,
+    hasUncommittedChanges,
+  });
+  const setDiffModeOverride = useSetDiffModeOverride();
 
   const {
     files,
@@ -1675,17 +1727,20 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, diffMode, serverId, workspaceId],
   );
-  const setActiveReviewMode = useSetActiveReviewDraftMode();
 
   const handleSelectUncommitted = useCallback(() => {
-    setDiffModeOverride("uncommitted");
-    setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "uncommitted" });
-  }, [reviewDraftScopeKey, setActiveReviewMode]);
+    setDiffModeOverride({
+      scopeKey: reviewDraftScopeKey,
+      override: { serverId, cwd, mode: "uncommitted", isDirtyAtSelection: hasUncommittedChanges },
+    });
+  }, [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride]);
 
   const handleSelectBase = useCallback(() => {
-    setDiffModeOverride("base");
-    setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "base" });
-  }, [reviewDraftScopeKey, setActiveReviewMode]);
+    setDiffModeOverride({
+      scopeKey: reviewDraftScopeKey,
+      override: { serverId, cwd, mode: "base", isDirtyAtSelection: hasUncommittedChanges },
+    });
+  }, [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride]);
 
   const reviewActions = useInlineReviewController({
     reviewDraftKey,
@@ -1754,9 +1809,8 @@ export function GitDiffPane({
   const bodyHeightByKeyRef = useRef<Record<string, number>>({});
   const defaultHeaderHeightRef = useRef<number>(44);
   const [heightVersion, setHeightVersion] = useState(0);
-  const diffBodyLineHeight = theme.lineHeight.diff;
-  const diffBodyChromeHeight = theme.borderWidth[1] * 2;
-  const statusBodyHeightEstimate = diffBodyChromeHeight + theme.spacing[4] * 2 + diffBodyLineHeight;
+  const diffBodyChromeHeight = BORDER_WIDTH[1] * 2;
+  const statusBodyHeightEstimate = diffBodyChromeHeight + SPACING[4] * 2 + diffBodyLineHeight;
   const { flatItems, stickyHeaderIndices } = useMemo(() => {
     const items: DiffFlatItem[] = [];
     const stickyIndices: number[] = [];
@@ -1777,12 +1831,13 @@ export function GitDiffPane({
   const getBodyHeightKey = useCallback(
     (file: ParsedDiffFile): string => {
       if (file.status === "too_large" || file.status === "binary") {
-        return `${effectiveLayout}:${wrapLines ? "wrap" : "scroll"}:${file.path}:${file.status}`;
+        return `${effectiveLayout}:${wrapLines ? "wrap" : "scroll"}:${diffBodyTypographyKey}:${file.path}:${file.status}`;
       }
 
       return [
         effectiveLayout,
         wrapLines ? "wrap" : "scroll",
+        diffBodyTypographyKey,
         file.path,
         file.status ?? "ok",
         file.additions,
@@ -1792,7 +1847,7 @@ export function GitDiffPane({
         getDiffContentLength(file),
       ].join(":");
     },
-    [effectiveLayout, wrapLines],
+    [diffBodyTypographyKey, effectiveLayout, wrapLines],
   );
 
   const estimateBodyHeight = useCallback(
@@ -1938,11 +1993,6 @@ export function GitDiffPane({
     }
   }, [allExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
 
-  // Clear diff mode override when auto mode changes (e.g., after commit)
-  useEffect(() => {
-    setDiffModeOverride(null);
-  }, [autoDiffMode]);
-
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
       if (item.type === "header") {
@@ -1961,6 +2011,7 @@ export function GitDiffPane({
           file={item.file}
           layout={effectiveLayout}
           wrapLines={wrapLines}
+          codeFontSize={codeFontSize}
           reviewActions={reviewActions}
           onBodyHeightChange={handleBodyHeightChange}
           testID={`diff-file-${item.fileIndex}-body`}
@@ -1968,6 +2019,7 @@ export function GitDiffPane({
       );
     },
     [
+      codeFontSize,
       effectiveLayout,
       handleBodyHeightChange,
       handleHeaderHeightChange,
@@ -2015,45 +2067,62 @@ export function GitDiffPane({
     () => ({
       expandedPathsArray,
       effectiveLayout,
+      diffBodyTypographyKey,
       heightVersion,
       wrapLines,
       reviewActions,
     }),
-    [expandedPathsArray, effectiveLayout, heightVersion, wrapLines, reviewActions],
+    [
+      expandedPathsArray,
+      effectiveLayout,
+      diffBodyTypographyKey,
+      heightVersion,
+      wrapLines,
+      reviewActions,
+    ],
   );
 
   const hasChanges = files.length > 0;
   const diffErrorMessage = diffPayloadError?.message ?? null;
   const prErrorMessage = computePrErrorMessage(githubFeaturesEnabled, prPayloadError);
-  const baseRefLabel = useMemo(() => computeBaseRefLabel(baseRef), [baseRef]);
-  const iconColor = theme.colors.foregroundMuted;
+  const baseRefLabel = useMemo(
+    () => computeBaseRefLabel(baseRef, t("workspace.git.diff.base")),
+    [baseRef, t],
+  );
   const gitActionsIcons = useMemo(
     () => ({
-      commit: <GitCommitHorizontal size={16} color={iconColor} />,
-      pull: <Download size={16} color={iconColor} />,
-      push: <Upload size={16} color={iconColor} />,
-      pullAndPush: <ArrowDownUp size={16} color={iconColor} />,
-      viewPr: <GitHubIcon size={16} color={iconColor} />,
-      createPr: <GitHubIcon size={16} color={iconColor} />,
-      mergePrSquash: <GitHubIcon size={16} color={iconColor} />,
-      mergePrMerge: <GitHubIcon size={16} color={iconColor} />,
-      mergePrRebase: <GitHubIcon size={16} color={iconColor} />,
-      merge: <GitMerge size={16} color={iconColor} />,
-      mergeFromBase: <RefreshCcw size={16} color={iconColor} />,
-      archive: <Archive size={16} color={iconColor} />,
+      commit: <ThemedGitCommitHorizontal size={16} uniProps={foregroundMutedIconColorMapping} />,
+      pull: <ThemedDownload size={16} uniProps={foregroundMutedIconColorMapping} />,
+      push: <ThemedUpload size={16} uniProps={foregroundMutedIconColorMapping} />,
+      pullAndPush: <ThemedArrowDownUp size={16} uniProps={foregroundMutedIconColorMapping} />,
+      viewPr: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
+      createPr: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
+      mergePrSquash: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
+      mergePrMerge: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
+      mergePrRebase: <ThemedGitHubIcon size={16} uniProps={foregroundMutedIconColorMapping} />,
+      merge: <ThemedGitMerge size={16} uniProps={foregroundMutedIconColorMapping} />,
+      mergeFromBase: <ThemedRefreshCcw size={16} uniProps={foregroundMutedIconColorMapping} />,
+      archive: <ThemedArchive size={16} uniProps={foregroundMutedIconColorMapping} />,
     }),
-    [iconColor],
+    [],
   );
   const { gitActions, branchLabel } = useGitActions({ serverId, cwd, icons: gitActionsIcons });
   const committedDiffDescription = useMemo(
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
     [baseRefLabel, branchLabel],
   );
+  const uncommittedLabel = t("workspace.git.diff.uncommitted");
+  const committedLabel = t("workspace.git.diff.committed");
 
   const emptyMessage = computeEmptyMessage(
     changesPreferences.hideWhitespace,
     diffMode,
     baseRefLabel,
+    {
+      hiddenWhitespace: t("workspace.git.diff.emptyHiddenWhitespace"),
+      uncommitted: t("workspace.git.diff.emptyUncommitted"),
+      againstBase: (label) => t("workspace.git.diff.emptyAgainstBase", { baseRef: label }),
+    },
   );
 
   const bodyContent: ReactElement = (
@@ -2076,7 +2145,8 @@ export function GitDiffPane({
       handleDiffListScroll={handleDiffListScroll}
       onContentSizeChange={scrollbar.onContentSizeChange}
       showDesktopWebScrollbar={showDesktopWebScrollbar}
-      foregroundMutedColor={theme.colors.foregroundMuted}
+      checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
+      notRepositoryLabel={t("workspace.git.diff.notRepository")}
     />
   );
 
@@ -2085,7 +2155,7 @@ export function GitDiffPane({
       {!hideHeaderRow ? (
         <View style={styles.header} testID="changes-header">
           <View style={styles.headerLeft}>
-            <GitBranch size={16} color={theme.colors.foregroundMuted} />
+            <ThemedGitBranch size={16} uniProps={foregroundMutedIconColorMapping} />
             <Text style={styles.branchLabel} testID="changes-branch" numberOfLines={1}>
               {branchLabel}
             </Text>
@@ -2102,12 +2172,12 @@ export function GitDiffPane({
                 style={diffModeTriggerStyle}
                 testID="changes-diff-status"
                 accessibilityRole="button"
-                accessibilityLabel="Diff mode"
+                accessibilityLabel={t("workspace.git.diff.diffMode")}
               >
                 <Text style={styles.diffStatusText} numberOfLines={1}>
-                  {diffMode === "uncommitted" ? "Uncommitted" : "Committed"}
+                  {diffMode === "uncommitted" ? uncommittedLabel : committedLabel}
                 </Text>
-                <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+                <ThemedChevronDown size={12} uniProps={foregroundMutedIconColorMapping} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" width={260} testID="changes-diff-status-menu">
                 <DropdownMenuItem
@@ -2115,7 +2185,7 @@ export function GitDiffPane({
                   selected={diffMode === "uncommitted"}
                   onSelect={handleSelectUncommitted}
                 >
-                  Uncommitted
+                  {uncommittedLabel}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -2124,7 +2194,7 @@ export function GitDiffPane({
                   description={committedDiffDescription}
                   onSelect={handleSelectBase}
                 >
-                  Committed
+                  {committedLabel}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -2551,13 +2621,15 @@ const styles = StyleSheet.create((theme) => ({
     elevation: 4,
     overflow: "visible",
   },
+  diffTextMetrics: {
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.lineHeight.diff,
+    fontFamily: theme.fontFamily.mono,
+  },
   lineNumberText: {
     width: "100%",
     textAlign: "right",
     paddingRight: theme.spacing[2],
-    fontSize: theme.fontSize.code,
-    lineHeight: theme.lineHeight.diff,
-    fontFamily: theme.fontFamily.mono,
     color: theme.colors.foregroundMuted,
     userSelect: "none",
   },
@@ -2570,9 +2642,6 @@ const styles = StyleSheet.create((theme) => ({
   diffLineText: {
     flex: 1,
     paddingRight: theme.spacing[3],
-    fontSize: theme.fontSize.code,
-    lineHeight: theme.lineHeight.diff,
-    fontFamily: theme.fontFamily.mono,
     color: theme.colors.foreground,
     userSelect: "text",
   },
@@ -2621,7 +2690,7 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-const HEADER_LINE_TEXT_STYLE = [styles.diffLineText, styles.headerLineText];
+const HEADER_LINE_TEXT_STYLE = [styles.diffTextMetrics, styles.diffLineText, styles.headerLineText];
 const FILE_SECTION_BODY_STYLE = [styles.fileSectionBodyContainer, styles.fileSectionBorder];
 const DIFF_CONTENT_SPLIT_ROW_STYLE = [styles.diffContent, styles.splitRow];
 const DIFF_CONTENT_ROW_STYLE = [styles.diffContent, styles.diffContentRow];

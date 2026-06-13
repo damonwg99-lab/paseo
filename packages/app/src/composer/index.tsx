@@ -6,6 +6,7 @@ import {
   Image,
   type PressableStateCallbackType,
 } from "react-native";
+import type { TFunction } from "i18next";
 import {
   useState,
   useEffect,
@@ -16,6 +17,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
@@ -25,8 +27,10 @@ import {
   Pencil,
   AudioLines,
   CircleDot,
+  FileText,
   GitPullRequest,
   Github,
+  Image as ImageIcon,
   Paperclip,
 } from "lucide-react-native";
 import Animated from "react-native-reanimated";
@@ -39,6 +43,7 @@ import {
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
+import { useFilePicker } from "@/hooks/use-file-picker";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -57,6 +62,7 @@ import {
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
   toggleGithubAttachmentFromPicker,
+  uploadFileAttachments,
   type AgentStreamWriter,
   type QueueWriter,
   type QueuedComposerMessage,
@@ -112,6 +118,7 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 function noop() {}
+const noopCallback = () => {};
 
 function resolveComposerButtonIconSize(): number {
   return isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -140,8 +147,14 @@ function resolveIsDesktopWebBreakpoint(isMobile: boolean): boolean {
   return isWeb && !isMobile;
 }
 
-function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean): string {
-  return isDesktopWebBreakpoint ? DESKTOP_MESSAGE_PLACEHOLDER : MOBILE_MESSAGE_PLACEHOLDER;
+function resolveCompactLayout(override: boolean | undefined, formFactor: boolean): boolean {
+  return override ?? formFactor;
+}
+
+function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean, t: TFunction): string {
+  return isDesktopWebBreakpoint
+    ? t("composer.placeholders.desktop")
+    : t("composer.placeholders.mobile");
 }
 
 function resolveGithubSearchEnabled(
@@ -166,10 +179,12 @@ function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean
 function buildRealtimeVoiceButtonStyle(
   hovered: boolean | undefined,
   voiceButtonDisabled: boolean,
+  reserveLeadingSpace: boolean,
 ): object[] {
   const hoveredStyle = hovered ? styles.iconButtonHovered : undefined;
   const disabledStyle = voiceButtonDisabled ? styles.buttonDisabled : undefined;
-  return [styles.realtimeVoiceButton, hoveredStyle, disabledStyle].filter(
+  const reserveStyle = reserveLeadingSpace ? styles.realtimeVoiceButtonCompactReserve : undefined;
+  return [styles.realtimeVoiceButton, reserveStyle, hoveredStyle, disabledStyle].filter(
     (value): value is object => Boolean(value),
   );
 }
@@ -223,14 +238,22 @@ interface RenderLeftContentArgs {
   agentId: string;
   serverId: string;
   focusInput: () => void;
+  isCompactLayout: boolean;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
-  const { agentControls, agentId, serverId, focusInput } = args;
+  const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
-    return <DraftAgentControls {...agentControls} />;
+    return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
   }
-  return <AgentControls agentId={agentId} serverId={serverId} onDropdownClose={focusInput} />;
+  return (
+    <AgentControls
+      agentId={agentId}
+      serverId={serverId}
+      onDropdownClose={focusInput}
+      isCompactLayout={isCompactLayout}
+    />
+  );
 }
 
 interface RenderAttachmentTrayArgs {
@@ -238,6 +261,13 @@ interface RenderAttachmentTrayArgs {
   isComposerLocked: boolean;
   handleOpenAttachment: (attachment: ComposerAttachment) => void;
   handleRemoveAttachment: (index: number) => void;
+  labels: {
+    openImage: string;
+    removeImage: string;
+    removeFile: string;
+    openGithub: (kind: string, number: number) => string;
+    removeGithub: (kind: string, number: number) => string;
+  };
 }
 
 function renderComposerFooter(
@@ -258,8 +288,13 @@ function renderComposerFooter(
 }
 
 function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | null {
-  const { selectedAttachments, isComposerLocked, handleOpenAttachment, handleRemoveAttachment } =
-    args;
+  const {
+    selectedAttachments,
+    isComposerLocked,
+    handleOpenAttachment,
+    handleRemoveAttachment,
+    labels,
+  } = args;
   if (selectedAttachments.length === 0) return null;
   return (
     <View style={styles.attachmentTray} testID="composer-attachment-tray">
@@ -270,6 +305,7 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
           disabled: isComposerLocked,
           onOpen: handleOpenAttachment,
           onRemove: handleRemoveAttachment,
+          labels,
         }),
       )}
     </View>
@@ -280,10 +316,13 @@ interface RenderQueueTrackArgs {
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
   handleSendQueuedNow: (id: string) => Promise<void>;
+  editLabel: string;
+  sendNowLabel: string;
 }
 
 function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
-  const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow } = args;
+  const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow, editLabel, sendNowLabel } =
+    args;
   if (queuedMessages.length === 0) return null;
   return (
     <View style={styles.queueTrack}>
@@ -293,6 +332,8 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
           item={item}
           onEdit={handleEditQueuedMessage}
           onSendNow={handleSendQueuedNow}
+          editLabel={editLabel}
+          sendNowLabel={sendNowLabel}
         />
       ))}
     </View>
@@ -305,10 +346,11 @@ interface RenderComposerAttachmentPillArgs {
   disabled: boolean;
   onOpen: (attachment: ComposerAttachment) => void;
   onRemove: (index: number) => void;
+  labels: RenderAttachmentTrayArgs["labels"];
 }
 
 function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
-  const { attachment, index, disabled, onOpen, onRemove } = args;
+  const { attachment, index, disabled, onOpen, onRemove, labels } = args;
   if (attachment.kind === "image") {
     return (
       <ImageAttachmentPill
@@ -318,6 +360,20 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         disabled={disabled}
         onOpen={onOpen}
         onRemove={onRemove}
+        openLabel={labels.openImage}
+        removeLabel={labels.removeImage}
+      />
+    );
+  }
+  if (attachment.kind === "file") {
+    return (
+      <FileAttachmentPill
+        key={attachment.attachment.id}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onRemove={onRemove}
+        removeLabel={labels.removeFile}
       />
     );
   }
@@ -338,6 +394,8 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
       disabled={disabled}
       onOpen={onOpen}
       onRemove={onRemove}
+      openLabel={labels.openGithub}
+      removeLabel={labels.removeGithub}
     />
   );
 }
@@ -458,9 +516,17 @@ interface QueuedMessageRowProps {
   item: QueuedMessage;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  editLabel: string;
+  sendNowLabel: string;
 }
 
-function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
+function QueuedMessageRow({
+  item,
+  onEdit,
+  onSendNow,
+  editLabel,
+  sendNowLabel,
+}: QueuedMessageRowProps) {
   const handleEdit = useCallback(() => {
     onEdit(item.id);
   }, [onEdit, item.id]);
@@ -476,7 +542,7 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
         <Pressable
           onPress={handleEdit}
           style={styles.queueActionButton}
-          accessibilityLabel="Edit queued message"
+          accessibilityLabel={editLabel}
           accessibilityRole="button"
         >
           <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
@@ -484,7 +550,7 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
         <Pressable
           onPress={handleSendNow}
           style={QUEUE_SEND_BUTTON_STYLE}
-          accessibilityLabel="Send queued message now"
+          accessibilityLabel={sendNowLabel}
           accessibilityRole="button"
         >
           <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
@@ -509,6 +575,8 @@ interface ImageAttachmentPillProps {
   disabled: boolean;
   onOpen: (attachment: ComposerAttachment) => void;
   onRemove: (index: number) => void;
+  openLabel: string;
+  removeLabel: string;
 }
 
 function ImageAttachmentPill({
@@ -517,6 +585,8 @@ function ImageAttachmentPill({
   disabled,
   onOpen,
   onRemove,
+  openLabel,
+  removeLabel,
 }: ImageAttachmentPillProps) {
   const handleOpen = useCallback(() => {
     onOpen(attachment);
@@ -529,8 +599,8 @@ function ImageAttachmentPill({
       testID="composer-image-attachment-pill"
       onOpen={handleOpen}
       onRemove={handleRemove}
-      openAccessibilityLabel="Open image attachment"
-      removeAccessibilityLabel="Remove image attachment"
+      openAccessibilityLabel={openLabel}
+      removeAccessibilityLabel={removeLabel}
       disabled={disabled}
     >
       <ImageAttachmentThumbnail image={attachment.metadata} />
@@ -544,6 +614,8 @@ interface GithubAttachmentPillProps {
   disabled: boolean;
   onOpen: (attachment: ComposerAttachment) => void;
   onRemove: (index: number) => void;
+  openLabel: (kind: string, number: number) => string;
+  removeLabel: (kind: string, number: number) => string;
 }
 
 function GithubAttachmentPill({
@@ -552,6 +624,8 @@ function GithubAttachmentPill({
   disabled,
   onOpen,
   onRemove,
+  openLabel,
+  removeLabel,
 }: GithubAttachmentPillProps) {
   const item = attachment.item;
   const kindLabel = item.kind === "pr" ? "PR" : "issue";
@@ -566,8 +640,8 @@ function GithubAttachmentPill({
       testID="composer-github-attachment-pill"
       onOpen={handleOpen}
       onRemove={handleRemove}
-      openAccessibilityLabel={`Open ${kindLabel} #${item.number}`}
-      removeAccessibilityLabel={`Remove ${kindLabel} #${item.number}`}
+      openAccessibilityLabel={openLabel(kindLabel, item.number)}
+      removeAccessibilityLabel={removeLabel(kindLabel, item.number)}
       disabled={disabled}
     >
       <View style={styles.githubPillBody}>
@@ -580,6 +654,45 @@ function GithubAttachmentPill({
         </View>
         <Text style={styles.githubPillText} numberOfLines={1}>
           #{item.number} {item.title}
+        </Text>
+      </View>
+    </AttachmentPill>
+  );
+}
+
+interface FileAttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "file" }>;
+  index: number;
+  disabled: boolean;
+  onRemove: (index: number) => void;
+  removeLabel: string;
+}
+
+function FileAttachmentPill({
+  attachment,
+  index,
+  disabled,
+  onRemove,
+  removeLabel,
+}: FileAttachmentPillProps) {
+  const handleRemove = useCallback(() => {
+    onRemove(index);
+  }, [onRemove, index]);
+  return (
+    <AttachmentPill
+      testID="composer-file-attachment-pill"
+      onOpen={noopCallback}
+      onRemove={handleRemove}
+      openAccessibilityLabel={attachment.attachment.fileName}
+      removeAccessibilityLabel={removeLabel}
+      disabled={disabled}
+    >
+      <View style={styles.filePillBody}>
+        <View style={styles.filePillIcon}>
+          <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+        </View>
+        <Text style={styles.filePillText} numberOfLines={1}>
+          {attachment.attachment.fileName}
         </Text>
       </View>
     </AttachmentPill>
@@ -657,6 +770,8 @@ interface ComposerProps {
   autoFocus?: boolean;
   /** Callback to expose the addImages function to parent components */
   onAddImages?: (addImages: (images: ImageAttachment[]) => void) => void;
+  /** Callback to expose the addFiles function to parent components */
+  onAddFiles?: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   /** Callback to expose a focus function to parent components (desktop only). */
   onFocusInput?: (focus: () => void) => void;
   /** Optional draft context for listing commands before an agent exists. */
@@ -674,11 +789,13 @@ interface ComposerProps {
   footer?: ReactNode;
   /** When true, a parent wrapper owns the keyboard shift, so the composer skips its own. */
   externalKeyboardShift?: boolean;
+  /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
+  isCompactLayout?: boolean;
 }
 
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
-const DESKTOP_MESSAGE_PLACEHOLDER = "Message the agent, tag @files, or use /commands and /skills";
-const MOBILE_MESSAGE_PLACEHOLDER = "Message, @files, /commands";
 const StableMessageInput = memo(MessageInput);
 
 function resolveContextWindowValues(
@@ -698,6 +815,7 @@ interface ComposerCancelButtonProps {
   isConnected: boolean;
   isCancellingAgent: boolean;
   agentInterruptKeys: ReturnType<typeof useShortcutKeys>;
+  t: TFunction;
 }
 
 function ComposerCancelButton({
@@ -707,8 +825,11 @@ function ComposerCancelButton({
   isConnected,
   isCancellingAgent,
   agentInterruptKeys,
+  t,
 }: ComposerCancelButtonProps) {
-  const accessibilityLabel = isCancellingAgent ? "Canceling agent" : "Stop agent";
+  const accessibilityLabel = isCancellingAgent
+    ? t("composer.cancel.cancelingAgent")
+    : t("composer.cancel.stopAgent");
   const icon = isCancellingAgent ? (
     <ActivityIndicator size="small" color="white" />
   ) : (
@@ -728,7 +849,7 @@ function ComposerCancelButton({
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipRow}>
-          <Text style={styles.tooltipText}>Interrupt</Text>
+          <Text style={styles.tooltipText}>{t("composer.cancel.interrupt")}</Text>
           {shortcutNode}
         </View>
       </TooltipContent>
@@ -761,6 +882,7 @@ interface ComposerVoiceModeButtonProps {
     state: PressableStateCallbackType & { hovered?: boolean },
   ) => (object | undefined)[];
   voiceToggleKeys: ReturnType<typeof useShortcutKeys>;
+  t: TFunction;
 }
 
 interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
@@ -803,6 +925,7 @@ function ComposerVoiceModeButton({
   isVoiceSwitching,
   realtimeVoiceButtonStyle,
   voiceToggleKeys,
+  t,
 }: ComposerVoiceModeButtonProps) {
   const shortcutNode = voiceToggleKeys ? <Shortcut chord={voiceToggleKeys} /> : null;
   const renderTriggerContent = useCallback(
@@ -820,7 +943,7 @@ function ComposerVoiceModeButton({
       <TooltipTrigger
         onPress={handleToggleRealtimeVoice}
         disabled={!isConnected || isVoiceSwitching}
-        accessibilityLabel="Enable Voice mode"
+        accessibilityLabel={t("composer.voice.enableVoiceMode")}
         accessibilityRole="button"
         style={realtimeVoiceButtonStyle}
       >
@@ -828,7 +951,7 @@ function ComposerVoiceModeButton({
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipRow}>
-          <Text style={styles.tooltipText}>Voice mode</Text>
+          <Text style={styles.tooltipText}>{t("composer.voice.voiceMode")}</Text>
           {shortcutNode}
         </View>
       </TooltipContent>
@@ -836,6 +959,7 @@ function ComposerVoiceModeButton({
   );
 }
 
+// oxlint-disable-next-line complexity
 export function Composer({
   agentId,
   serverId,
@@ -859,6 +983,7 @@ export function Composer({
   clearDraft,
   autoFocus = false,
   onAddImages,
+  onAddFiles,
   onFocusInput,
   commandDraftConfig,
   onMessageSent,
@@ -869,7 +994,9 @@ export function Composer({
   inputWrapperStyle,
   footer,
   externalKeyboardShift,
+  isCompactLayout: isCompactLayoutOverride,
 }: ComposerProps) {
+  const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -899,9 +1026,11 @@ export function Composer({
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
-  const isMobile = useIsCompactFormFactor();
-  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isMobile);
-  const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
+  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
+  const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
+  const messagePlaceholder = resolveMessagePlaceholder(isDesktopLayout, t);
   const userInput = value;
   const setUserInput = onChangeText;
   const {
@@ -931,6 +1060,7 @@ export function Composer({
   });
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
@@ -1007,6 +1137,7 @@ export function Composer({
   }, [userInput.length]);
 
   const { pickImages } = useImageAttachmentPicker();
+  const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef<
     ((agentId: string, text: string, attachments: ComposerAttachment[]) => Promise<void>) | null
@@ -1027,6 +1158,20 @@ export function Composer({
   useEffect(() => {
     onAddImages?.(addImages);
   }, [addImages, onAddImages]);
+
+  // Expose addFiles function to parent for drag-and-drop support
+  const addFiles = useCallback(
+    (files: UserComposerAttachment[]) => {
+      setSelectedAttachments((prev) => [...prev, ...files]);
+    },
+    [setSelectedAttachments],
+  );
+
+  /* oxlint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    onAddFiles?.(addFiles);
+  }, [addFiles, onAddFiles]);
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   const focusInput = useCallback(() => {
     if (isNative) return;
@@ -1051,11 +1196,11 @@ export function Composer({
         return;
       }
       if (!sendAgentMessageRef.current) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments);
     },
-    [cwd, onMessageSent],
+    [cwd, onMessageSent, t],
   );
 
   useEffect(() => {
@@ -1069,7 +1214,7 @@ export function Composer({
       sendAttachments: ComposerAttachment[],
     ) => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const stream: AgentStreamWriter = {
         getTail: (id) => useSessionStore.getState().sessions[serverId]?.agentStreamTail?.get(id),
@@ -1087,7 +1232,7 @@ export function Composer({
       });
       onAttentionPromptSend?.();
     };
-  }, [client, onAttentionPromptSend, serverId, setAgentStreamTail, setAgentStreamHead]);
+  }, [client, onAttentionPromptSend, serverId, setAgentStreamTail, setAgentStreamHead, t]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -1162,6 +1307,7 @@ export function Composer({
         onSubmitError: (error) => {
           console.error("[AgentInput] Failed to send message:", error);
         },
+        failedToSendMessage: t("composer.errors.failedToSend"),
       });
       completeSubmit({
         result,
@@ -1179,6 +1325,7 @@ export function Composer({
       setUserInput,
       submitBehavior,
       submitMessage,
+      t,
     ],
   );
 
@@ -1220,6 +1367,36 @@ export function Composer({
     if (newImages.length === 0) return;
     addImages(newImages);
   }, [addImages, pickImages]);
+
+  const handlePickFile = useCallback(async () => {
+    if (!client) {
+      toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
+      return;
+    }
+    try {
+      const files = await pickFiles();
+      if (!files || files.length === 0) return;
+
+      const oversized = files.find((f) => f.bytes.byteLength > MAX_FILE_SIZE_BYTES);
+      if (oversized) {
+        toastErrorRef.current(
+          t("composer.errors.fileTooLarge", { size: "50MB", fileName: oversized.fileName }),
+        );
+        return;
+      }
+
+      setIsUploadingFile(true);
+      const uploaded = await uploadFileAttachments({ client, files });
+      addFiles(uploaded);
+    } catch (error) {
+      console.error("[Composer] Failed to upload file:", error);
+      toastErrorRef.current(
+        error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
+      );
+    } finally {
+      setIsUploadingFile(false);
+    }
+  }, [client, pickFiles, addFiles, t]);
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
@@ -1357,12 +1534,13 @@ export function Composer({
         queue: queueWriter,
         submitMessage: ({ text, attachments: queuedAttachments }) =>
           submitMessage(text, queuedAttachments),
+        failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage],
+    [agentId, queueWriter, submitMessage, t],
   );
 
   const handleQueue = useCallback(
@@ -1398,8 +1576,8 @@ export function Composer({
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) =>
-      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled),
-    [voiceButtonDisabled],
+      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled, isCompactLayout),
+    [isCompactLayout, voiceButtonDisabled],
   );
 
   const cancelButton = useMemo(
@@ -1414,6 +1592,7 @@ export function Composer({
         isConnected={isConnected}
         isCancellingAgent={isCancellingAgent}
         agentInterruptKeys={agentInterruptKeys}
+        t={t}
       />
     ),
     [
@@ -1426,6 +1605,7 @@ export function Composer({
       isCancellingAgent,
       isConnected,
       isProcessing,
+      t,
     ],
   );
 
@@ -1437,13 +1617,14 @@ export function Composer({
         isAgentRunning={isAgentRunning}
         hasSendableContent={hasSendableContent}
         isProcessing={isProcessing}
-        isCompact={isMobile}
+        isCompact={isCompactLayout}
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
         isConnected={isConnected}
         isVoiceSwitching={isVoiceSwitching}
         realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
         voiceToggleKeys={voiceToggleKeys}
+        t={t}
         cancelButton={cancelButton}
       />
     ),
@@ -1455,11 +1636,12 @@ export function Composer({
       hasSendableContent,
       isAgentRunning,
       isConnected,
-      isMobile,
+      isCompactLayout,
       isProcessing,
       isVoiceModeForAgent,
       isVoiceSwitching,
       realtimeVoiceButtonStyle,
+      t,
       voiceToggleKeys,
     ],
   );
@@ -1475,13 +1657,13 @@ export function Composer({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
-        isMobile,
+        isCompactLayout,
       ),
-    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isMobile],
+    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isCompactLayout],
   );
   const { beforeVoiceContent, footerInlineContent } = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, isMobile),
-    [contextWindowMeter, isMobile],
+    () => resolveContextWindowPlacement(contextWindowMeter, isCompactLayout),
+    [contextWindowMeter, isCompactLayout],
   );
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
@@ -1509,22 +1691,34 @@ export function Composer({
     () => [
       {
         id: "image",
-        label: "Add image",
-        icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        label: t("composer.attachments.addImage"),
+        icon: <ThemedImageIcon size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
         onSelect: () => {
           void handlePickImage();
         },
       },
       {
         id: "github",
-        label: "Add issue or PR",
+        label: t("composer.attachments.addIssueOrPr"),
         icon: <ThemedGithub size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
         onSelect: () => {
           setIsGithubPickerOpen(true);
         },
       },
+      ...(!isNative
+        ? [
+            {
+              id: "file",
+              label: t("composer.attachments.addFile"),
+              icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+              onSelect: () => {
+                void handlePickFile();
+              },
+            },
+          ]
+        : []),
     ],
-    [handlePickImage],
+    [handlePickImage, handlePickFile, t],
   );
 
   const handleToggleGithubItem = useCallback(
@@ -1548,8 +1742,8 @@ export function Composer({
   );
 
   const leftContent = useMemo(
-    () => renderLeftContent({ agentControls, agentId, serverId, focusInput }),
-    [agentId, focusInput, serverId, agentControls],
+    () => renderLeftContent({ agentControls, agentId, serverId, focusInput, isCompactLayout }),
+    [agentId, focusInput, serverId, agentControls, isCompactLayout],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
@@ -1622,18 +1816,34 @@ export function Composer({
         isComposerLocked,
         handleOpenAttachment,
         handleRemoveAttachment,
+        labels: {
+          openImage: t("composer.attachments.openImage"),
+          removeImage: t("composer.attachments.removeImage"),
+          removeFile: t("composer.attachments.removeFile"),
+          openGithub: (kind: string, number: number) =>
+            t("composer.attachments.openGithub", { kind, number }),
+          removeGithub: (kind: string, number: number) =>
+            t("composer.attachments.removeGithub", { kind, number }),
+        },
       }),
-    [handleOpenAttachment, handleRemoveAttachment, isComposerLocked, selectedAttachments],
+    [handleOpenAttachment, handleRemoveAttachment, isComposerLocked, selectedAttachments, t],
   );
 
   const queueList = useMemo(
-    () => renderQueueTrack({ queuedMessages, handleEditQueuedMessage, handleSendQueuedNow }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages],
+    () =>
+      renderQueueTrack({
+        queuedMessages,
+        handleEditQueuedMessage,
+        handleSendQueuedNow,
+        editLabel: t("composer.attachments.editQueuedMessage"),
+        sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+      }),
+    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
   const messageInputContainerRef = useRef<View>(null);
 
-  const isSubmitBusy = isProcessing || isSubmitLoading;
+  const isSubmitBusy = isProcessing || isSubmitLoading || isUploadingFile;
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
@@ -1641,8 +1851,8 @@ export function Composer({
     [sendError],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
-    ? "Searching..."
-    : "No results found.";
+    ? t("composer.github.searching")
+    : t("composer.github.noResults");
   const autocompleteVisible = autocomplete.isVisible && isPaneFocused;
 
   return (
@@ -1713,8 +1923,8 @@ export function Composer({
               onSelect={noop}
               keepOpenOnSelect
               searchable
-              searchPlaceholder="Search issues and PRs..."
-              title="Attach issue or PR"
+              searchPlaceholder={t("composer.github.searchPlaceholder")}
+              title={t("composer.github.title")}
               open={isGithubPickerOpen}
               onOpenChange={handleGithubPickerOpenChange}
               onSearchQueryChange={setGithubSearchQuery}
@@ -1768,6 +1978,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
       md: -theme.spacing[3],
     },
     alignItems: "center",
+    paddingBottom: {
+      xs: 0,
+      md: theme.spacing[2],
+    },
   },
   footerContent: {
     width: "100%",
@@ -1830,6 +2044,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  realtimeVoiceButtonCompactReserve: {
+    marginLeft: theme.spacing[1],
+  },
   realtimeVoiceButtonActive: {
     backgroundColor: theme.colors.palette.green[600],
     borderColor: theme.colors.palette.green[800],
@@ -1865,6 +2082,20 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: 18,
     alignItems: "center",
     justifyContent: "center",
+  },
+  filePillBody: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  filePillIcon: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  filePillText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 1,
   },
   githubPillText: {
     minWidth: 0,
@@ -1935,6 +2166,8 @@ const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
+const ThemedImageIcon = withUnistyles(ImageIcon);
+const ThemedFileText = withUnistyles(FileText);
 const ThemedGithub = withUnistyles(Github);
 
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
