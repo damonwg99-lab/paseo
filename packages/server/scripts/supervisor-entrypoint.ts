@@ -152,7 +152,7 @@ async function main(): Promise<void> {
           },
         })
       : undefined,
-    restartOnCrash: true,
+    restartOnCrash: persistedConfig.daemon?.restartOnCrash ?? true,
     logFile: supervisorLogFile,
     onWorkerReady: async ({ listen }) => {
       await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });

@@ -48,18 +48,23 @@ export function replaceFetchedAgentDirectory(input: {
 }): { agents: Map<string, Agent> } {
   const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
   const store = useSessionStore.getState();
+  const previousAgents = store.sessions[input.serverId]?.agents ?? new Map<string, Agent>();
 
   store.setAgents(input.serverId, fetchedAgents);
   store.setAgentDetails(input.serverId, (prev) => {
-    let next: Map<string, Agent> | null = null;
+    const next = new Map(prev);
+    // Remove entries now covered by the live agents map (live data is fresher)
     for (const agentId of fetchedAgents.keys()) {
-      if (!prev.has(agentId)) {
-        continue;
-      }
-      next ??= new Map(prev);
       next.delete(agentId);
     }
-    return next ?? prev;
+    // Preserve agents that are being removed from the live map — they may be
+    // closed/archived and the sidebar still needs their data for navigation.
+    for (const [agentId, agent] of previousAgents.entries()) {
+      if (!fetchedAgents.has(agentId) && !next.has(agentId)) {
+        next.set(agentId, agent);
+      }
+    }
+    return next;
   });
 
   const lastActivityByAgentId = new Map<string, Date>();

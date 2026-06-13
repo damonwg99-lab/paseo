@@ -14,6 +14,7 @@ import { taskDetailPanelRegistration } from "@/panels/task-detail-panel";
 import { taskActivityPanelRegistration } from "@/panels/task-activity-panel";
 import { archivedTasksPanelRegistration } from "@/panels/archived-tasks-panel";
 import { projectSettingsPanelRegistration } from "@/panels/project-settings-panel";
+import { projectListPanelRegistration } from "@/panels/project-list-panel";
 
 let panelsRegistered = false;
 
@@ -36,5 +37,6 @@ export function ensurePanelsRegistered(): void {
   registerPanel(taskActivityPanelRegistration);
   registerPanel(archivedTasksPanelRegistration);
   registerPanel(projectSettingsPanelRegistration);
+  registerPanel(projectListPanelRegistration);
   panelsRegistered = true;
 }

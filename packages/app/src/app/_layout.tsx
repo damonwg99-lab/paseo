@@ -888,6 +888,7 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />
+      <Stack.Screen name="h/[serverId]/create-project" />
       <Stack.Screen name="h/[serverId]/settings" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />

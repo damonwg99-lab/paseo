@@ -32,7 +32,8 @@ export type WorkspaceTabTarget =
   | { kind: "task_detail"; taskId: string }
   | { kind: "task_activity"; taskId: string }
   | { kind: "archived_tasks"; projectId: string }
-  | { kind: "project_settings"; projectId: string };
+  | { kind: "project_settings"; projectId: string }
+  | { kind: "project_list" };
 
 export interface WorkspaceTab {
   tabId: string;

@@ -112,6 +112,8 @@ import {
   DevTaskUpdateResponseSchema,
   DevTaskToggleZentaoSyncResponseSchema,
   DevTaskArchiveResponseSchema,
+  DevTaskLinkAgentResponseSchema,
+  DevTaskSetActiveAgentResponseSchema,
   DevDefaultConfigListResponseSchema,
   DevDefaultConfigUpdateResponseSchema,
   DevProjectBranchStatusListResponseSchema,
@@ -4437,6 +4439,32 @@ export class DaemonClient {
       requestId: requestId ?? crypto.randomUUID(),
       message: { type: "dev.task.archive", taskId },
       responseType: "dev.task.archive/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskLinkAgent(
+    taskId: string,
+    agentId: string,
+    requestId?: string,
+  ): Promise<z.infer<typeof DevTaskLinkAgentResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.link_agent", taskId, agentId },
+      responseType: "dev.task.link_agent/response",
+      timeout: 10000,
+    });
+  }
+
+  async devTaskSetActiveAgent(
+    taskId: string,
+    agentId: string,
+    requestId?: string,
+  ): Promise<z.infer<typeof DevTaskSetActiveAgentResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: requestId ?? crypto.randomUUID(),
+      message: { type: "dev.task.set_active_agent", taskId, agentId },
+      responseType: "dev.task.set_active_agent/response",
       timeout: 10000,
     });
   }

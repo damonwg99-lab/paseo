@@ -3,7 +3,11 @@ import {
   buildWorkspaceTabPersistenceKey,
   type WorkspaceTabTarget,
 } from "@/stores/workspace-tabs-store";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import {
+  buildHostWorkspaceRoute,
+  decodeWorkspaceIdFromPathSegment,
+  parseHostWorkspaceRouteFromPathname,
+} from "@/utils/host-routes";
 
 export interface PrepareWorkspaceTabInput {
   serverId: string;
@@ -61,6 +65,14 @@ export function navigateToPreparedWorkspaceTab(
   deps: NavigateToPreparedWorkspaceTabDeps,
 ): string {
   const route = prepareWorkspaceTab(input, deps);
+  // Skip navigation if already on the same workspace page — tab was already focused.
+  const parsed = parseHostWorkspaceRouteFromPathname(input.currentPathname ?? "");
+  const currentWorkspaceId = parsed?.workspaceId
+    ? decodeWorkspaceIdFromPathSegment(parsed.workspaceId)
+    : null;
+  if (parsed?.serverId === input.serverId && currentWorkspaceId === input.workspaceId) {
+    return route;
+  }
   deps.navigateToWorkspace(input.serverId, input.workspaceId, {
     currentPathname: input.currentPathname,
   });

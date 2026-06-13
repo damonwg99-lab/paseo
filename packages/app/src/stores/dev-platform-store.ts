@@ -17,12 +17,14 @@ import { useSessionStore } from "@/stores/session-store";
 
 interface DevPlatformState {
   projects: DevPlatformProject[];
+  activeProjectId: string | null;
   tasksByProject: Record<string, DevPlatformTask[]>;
   branchStatusByProject: Record<string, BranchStatusEntry[]>;
   defaultAgentConfigs: DefaultAgentConfig[];
   loading: boolean;
   error: string | null;
 
+  setActiveProjectId: (projectId: string | null) => void;
   fetchProjects: () => Promise<void>;
   fetchTasks: (projectId: string) => Promise<void>;
   fetchBranchStatus: (projectId: string) => Promise<void>;
@@ -74,6 +76,8 @@ interface DevPlatformState {
     involvedRepos?: string[];
     archivedAt?: string | null;
   }) => Promise<DevPlatformTask | null>;
+  linkAgentToTask: (taskId: string, agentId: string) => Promise<DevPlatformTask | null>;
+  setActiveAgent: (taskId: string, agentId: string) => Promise<DevPlatformTask | null>;
   toggleZentaoSync: (taskId: string, enabled: boolean) => Promise<DevPlatformTask | null>;
   archiveTask: (taskId: string) => Promise<DevPlatformTask | null>;
   updateDefaultConfig: (input: {
@@ -109,20 +113,34 @@ function updateTaskInState(
   };
 }
 
-export const useDevPlatformStore = create<DevPlatformState>((set) => ({
+export const useDevPlatformStore = create<DevPlatformState>((set, get) => ({
   projects: [],
+  activeProjectId: null,
   tasksByProject: {},
   branchStatusByProject: {},
   defaultAgentConfigs: [],
   loading: false,
   error: null,
 
+  setActiveProjectId: (projectId: string | null) => {
+    set({ activeProjectId: projectId });
+  },
+
   fetchProjects: async () => {
     set({ loading: true, error: null });
     try {
       const payload = await getClient().devProjectList();
+      const projects = payload.projects ?? [];
+      const state = get();
+      const activeProjectId = state.activeProjectId;
+      const nonArchived = projects.filter((p) => !p.archivedAt);
+      const nextActiveId =
+        activeProjectId && nonArchived.some((p) => p.id === activeProjectId)
+          ? activeProjectId
+          : (nonArchived[0]?.id ?? null);
       set({
-        projects: payload.projects ?? [],
+        projects,
+        activeProjectId: nextActiveId,
         loading: false,
       });
     } catch (error) {
@@ -172,7 +190,10 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
       const payload = await getClient().devProjectCreate(input);
       const project = payload.project;
       if (project) {
-        set((state) => ({ projects: [...state.projects, project] }));
+        set((state) => ({
+          projects: [...state.projects, project],
+          activeProjectId: project.id,
+        }));
       }
       return project;
     } catch (error) {
@@ -202,9 +223,16 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
       const payload = await getClient().devProjectArchive(projectId);
       const project = payload.project;
       if (project) {
-        set((state) => ({
-          projects: state.projects.map((p) => (p.id === project.id ? project : p)),
-        }));
+        const state = get();
+        const updatedProjects = state.projects.map((p) => (p.id === project.id ? project : p));
+        const nextActiveId =
+          state.activeProjectId === project.id
+            ? (updatedProjects.find((p) => !p.archivedAt)?.id ?? null)
+            : state.activeProjectId;
+        set({
+          projects: updatedProjects,
+          activeProjectId: nextActiveId,
+        });
       }
       return project;
     } catch (error) {
@@ -235,6 +263,34 @@ export const useDevPlatformStore = create<DevPlatformState>((set) => ({
   updateTask: async (input) => {
     try {
       const payload = await getClient().devTaskUpdate(input);
+      const task = payload.task;
+      if (task) {
+        set((state) => updateTaskInState(state, task));
+      }
+      return task;
+    } catch (error) {
+      set({ error: String(error) });
+      return null;
+    }
+  },
+
+  linkAgentToTask: async (taskId: string, agentId: string) => {
+    try {
+      const payload = await getClient().devTaskLinkAgent(taskId, agentId);
+      const task = payload.task;
+      if (task) {
+        set((state) => updateTaskInState(state, task));
+      }
+      return task;
+    } catch (error) {
+      set({ error: String(error) });
+      return null;
+    }
+  },
+
+  setActiveAgent: async (taskId: string, agentId: string) => {
+    try {
+      const payload = await getClient().devTaskSetActiveAgent(taskId, agentId);
       const task = payload.task;
       if (task) {
         set((state) => updateTaskInState(state, task));

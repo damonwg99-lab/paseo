@@ -188,7 +188,7 @@ function useStableProjectIconData(
   return stableRef.current.data;
 }
 
-function isWorkspaceSelected(input: {
+export function isWorkspaceSelected(input: {
   selection: ActiveWorkspaceSelection | null;
   serverId: string | null;
   workspaceId: string;
@@ -367,7 +367,7 @@ function workspaceKebabStyle({
   return [styles.kebabButton, hovered && styles.kebabButtonHovered];
 }
 
-function noop() {}
+export function noop() {}
 
 const prBadgeStyles = StyleSheet.create((theme) => ({
   badge: {
@@ -2099,7 +2099,7 @@ function areWorkspaceRowItemPropsEqual(
 
 const MemoWorkspaceRowItem = memo(WorkspaceRowItem, areWorkspaceRowItemPropsEqual);
 
-function WorkspaceRow({
+export function WorkspaceRow({
   workspace,
   shortcutNumber,
   showShortcutBadge,

@@ -609,7 +609,11 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
 
   const { createDevPlatformServices } = await import("./dev-platform/index.js");
-  const devPlatformServices = createDevPlatformServices(config.paseoHome, logger);
+  const devPlatformServices = createDevPlatformServices(config.paseoHome, logger, {
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService,
+  });
   logger.info({ elapsed: elapsed() }, "Dev platform services initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();

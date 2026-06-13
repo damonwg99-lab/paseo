@@ -355,6 +355,14 @@ export function buildHostOpenProjectRoute(serverId: string) {
   return `${base}/open-project` as const;
 }
 
+export function buildHostCreateProjectRoute(serverId: string) {
+  const base = buildHostRootRoute(serverId);
+  if (base === "/") {
+    return "/" as const;
+  }
+  return `${base}/create-project` as const;
+}
+
 export function buildHostNewWorkspaceRoute(
   serverId: string,
   sourceDirectory: string,
@@ -378,6 +386,7 @@ export function buildHostNewWorkspaceRoute(
 export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
+  "agent_config",
   "shortcuts",
   "integrations",
   "permissions",
@@ -451,6 +460,9 @@ export function mapPathnameToServer(pathname: string, nextServerId: string) {
   }
   if (suffix.startsWith("open-project")) {
     return `${base}/open-project` as const;
+  }
+  if (suffix.startsWith("create-project")) {
+    return `${base}/create-project` as const;
   }
   const workspaceRoute = parseHostWorkspaceRouteFromPathname(pathname);
   if (workspaceRoute) {

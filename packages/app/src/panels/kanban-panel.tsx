@@ -1,4 +1,13 @@
-import { ListChecks, Plus, Archive, Settings, GitBranch, ClipboardList } from "lucide-react-native";
+import {
+  ListChecks,
+  Plus,
+  Archive,
+  Settings,
+  GitBranch,
+  ClipboardList,
+  Bot,
+  MoreHorizontal,
+} from "lucide-react-native";
 import {
   Pressable,
   ScrollView,
@@ -8,12 +17,14 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import invariant from "tiny-invariant";
-import { useCallback, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { useDevPlatformStore } from "@/stores/dev-platform-store";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { useSessionStore } from "@/stores/session-store";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type {
   DevPlatformTask,
@@ -48,8 +59,8 @@ function useKanbanPanelDescriptor(
   const projects = useDevPlatformStore((s) => s.projects);
   const project = projects.find((p) => p.id === target.projectId);
   return {
-    label: project?.name ?? "Kanban",
-    subtitle: "Project tasks",
+    label: "任务列表",
+    subtitle: project?.name ?? "",
     titleState: "ready",
     icon: ListChecks,
     statusBucket: null,
@@ -64,11 +75,24 @@ function KanbanPanel() {
   const { theme } = useUnistyles();
   const projects = useDevPlatformStore((s) => s.projects);
   const tasksByProject = useDevPlatformStore((s) => s.tasksByProject);
+  const fetchProjects = useDevPlatformStore((s) => s.fetchProjects);
+  const fetchTasks = useDevPlatformStore((s) => s.fetchTasks);
   const project = projects.find((p) => p.id === target.projectId);
   const activeTasks = useMemo(
     () => (tasksByProject[target.projectId] ?? []).filter((t) => t.status !== "archived"),
     [tasksByProject, target.projectId],
   );
+
+  // Fetch projects and tasks on mount to restore data after page refresh
+  useEffect(() => {
+    fetchProjects();
+  }, [fetchProjects]);
+
+  useEffect(() => {
+    if (target.projectId) {
+      fetchTasks(target.projectId);
+    }
+  }, [target.projectId, fetchTasks]);
 
   const [viewMode, setViewMode] = useState<ViewMode>("status");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
@@ -174,6 +198,52 @@ function KanbanPanel() {
   }, [target.projectId]);
 
   const archiveTask = useDevPlatformStore((s) => s.archiveTask);
+  const updateTask = useDevPlatformStore((s) => s.updateTask);
+  const linkAgentToTask = useDevPlatformStore((s) => s.linkAgentToTask);
+  const setActiveAgent = useDevPlatformStore((s) => s.setActiveAgent);
+  const defaultAgentConfigs = useDevPlatformStore((s) => s.defaultAgentConfigs);
+
+  const handleCreateAgent = useCallback(
+    async (task: DevPlatformTask) => {
+      const sessions = useSessionStore.getState().sessions;
+      const serverIds = Object.keys(sessions);
+      const serverId = serverIds.length > 0 ? serverIds[0] : null;
+      if (!serverId) return;
+      const client = getHostRuntimeStore().getClient(serverId);
+      if (!client) return;
+      const proj = projects.find((p) => p.id === task.projectId);
+      if (!proj) return;
+      // Find default config for this task type, or use fallback defaults
+      const defaultConfig = defaultAgentConfigs.find((c) => c.type === task.type);
+      const provider = defaultConfig?.provider ?? "claude";
+      const model = defaultConfig?.model ?? "glm-5.1";
+      const mode = defaultConfig?.mode ?? "default";
+      try {
+        const result = await client.createAgent({
+          provider,
+          cwd: proj.rootDirectory,
+          model,
+          modeId: mode,
+          initialPrompt: `${task.type}: ${task.title}\n${task.description ?? ""}`,
+        });
+        // Navigate to agent immediately — don't wait for task linking
+        navigateToAgent({ serverId, agentId: result.id });
+        // Link agent to task and set as active in background
+        void linkAgentToTask(task.id, result.id);
+        void setActiveAgent(task.id, result.id);
+      } catch (err) {
+        console.error("[Kanban] Failed to create agent for task:", err);
+      }
+    },
+    [projects, defaultAgentConfigs, linkAgentToTask, setActiveAgent],
+  );
+
+  const handleStatusChange = useCallback(
+    async (taskId: string, status: DevPlatformTaskStatus) => {
+      await updateTask({ taskId, status });
+    },
+    [updateTask],
+  );
 
   if (!isWorkspaceFocused) {
     return <View style={FLEX_FILL_STYLE} />;
@@ -266,6 +336,8 @@ function KanbanPanel() {
             theme={theme}
             onTaskPress={handleTaskPress}
             onArchive={archiveTask}
+            onCreateAgent={handleCreateAgent}
+            onStatusChange={handleStatusChange}
           />
         ) : (
           <TypeView
@@ -273,6 +345,8 @@ function KanbanPanel() {
             theme={theme}
             onTaskPress={handleTaskPress}
             onArchive={archiveTask}
+            onCreateAgent={handleCreateAgent}
+            onStatusChange={handleStatusChange}
           />
         )}
       </ScrollView>
@@ -355,11 +429,15 @@ function StatusView({
   theme,
   onTaskPress,
   onArchive,
+  onCreateAgent,
+  onStatusChange,
 }: {
   tasks: DevPlatformTask[];
   theme: ReturnType<typeof useUnistyles>["theme"];
   onTaskPress: (task: DevPlatformTask) => void;
   onArchive: (taskId: string) => void;
+  onCreateAgent: (task: DevPlatformTask) => void;
+  onStatusChange: (taskId: string, status: DevPlatformTaskStatus) => void;
 }) {
   const grouped = useMemo(() => {
     const map = new Map<DevPlatformTaskStatus, DevPlatformTask[]>();
@@ -399,6 +477,8 @@ function StatusView({
                 theme={theme}
                 onTaskPress={onTaskPress}
                 onArchive={onArchive}
+                onCreateAgent={onCreateAgent}
+                onStatusChange={onStatusChange}
               />
             ))}
           </ScrollView>
@@ -413,11 +493,15 @@ function TypeView({
   theme,
   onTaskPress,
   onArchive,
+  onCreateAgent,
+  onStatusChange,
 }: {
   tasks: DevPlatformTask[];
   theme: ReturnType<typeof useUnistyles>["theme"];
   onTaskPress: (task: DevPlatformTask) => void;
   onArchive: (taskId: string) => void;
+  onCreateAgent: (task: DevPlatformTask) => void;
+  onStatusChange: (taskId: string, status: DevPlatformTaskStatus) => void;
 }) {
   const grouped = useMemo(() => {
     const map = new Map<DevPlatformTaskType, DevPlatformTask[]>();
@@ -457,6 +541,8 @@ function TypeView({
                   theme={theme}
                   onTaskPress={onTaskPress}
                   onArchive={onArchive}
+                  onCreateAgent={onCreateAgent}
+                  onStatusChange={onStatusChange}
                 />
               ))}
             </View>
@@ -504,63 +590,89 @@ function KanbanCard({
   theme,
   onTaskPress,
   onArchive,
+  onCreateAgent,
+  onStatusChange,
 }: {
   task: DevPlatformTask;
   theme: ReturnType<typeof useUnistyles>["theme"];
   onTaskPress: (task: DevPlatformTask) => void;
   onArchive: (taskId: string) => void;
+  onCreateAgent: (task: DevPlatformTask) => void;
+  onStatusChange: (taskId: string, status: DevPlatformTaskStatus) => void;
 }) {
   const TypeIcon = TASK_TYPE_ICONS[task.type] ?? ClipboardList;
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const cardStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.card,
-      hovered && styles.cardHovered,
-      pressed && styles.cardPressed,
-    ],
+    ({ pressed }: PressableStateCallbackType) => [styles.card, pressed && styles.cardPressed],
     [],
   );
   const handlePress = useCallback(() => onTaskPress(task), [onTaskPress, task]);
   const handleArchive = useCallback(() => onArchive(task.id), [onArchive, task.id]);
+  const handleCreateAgent = useCallback(() => onCreateAgent(task), [onCreateAgent, task]);
+  const handleToggleMenu = useCallback(() => setIsMenuOpen((prev) => !prev), []);
   const deploymentBadge =
     task.deploymentStatus && task.deploymentStatus !== "not_deployed"
       ? (DEPLOYMENT_STATUS_LABELS[task.deploymentStatus] ?? task.deploymentStatus)
       : null;
   return (
-    <Pressable
-      style={cardStyle}
-      onPress={handlePress}
-      testID={`kanban-card-${task.id}`}
-      accessibilityRole="button"
-      accessibilityLabel={task.title}
-    >
-      {({ hovered }) => (
-        <>
-          <View style={styles.cardTop}>
-            <TypeIcon size={14} color={theme.colors.foregroundMuted} />
-            <Text style={styles.cardTitle} numberOfLines={1}>
-              {task.title}
-            </Text>
-          </View>
-          <View style={styles.cardBottom}>
-            <StatusDot status={task.status} theme={theme} />
-            <Text style={styles.cardStatus}>{STATUS_LABELS[task.status]}</Text>
-            {task.agentIds.length > 0 ? (
-              <Text style={styles.cardAgentCount}>Agent {task.agentIds.length}</Text>
-            ) : null}
-            {deploymentBadge ? <Text style={styles.cardDeployMark}>{deploymentBadge}</Text> : null}
-            {task.syncToZentao ? <Text style={styles.cardZentaoMark}>Z</Text> : null}
-          </View>
-          {hovered ? (
-            <View style={styles.cardActions}>
-              <Pressable onPress={handleArchive} style={styles.cardActionButton}>
-                <Archive size={12} color={theme.colors.foregroundMuted} />
-                <Text style={styles.cardActionText}>Archive</Text>
-              </Pressable>
-            </View>
+    <View style={styles.cardOuter}>
+      <Pressable
+        style={cardStyle}
+        onPress={handlePress}
+        testID={`kanban-card-${task.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={task.title}
+      >
+        <View style={styles.cardTop}>
+          <TypeIcon size={14} color={theme.colors.foregroundMuted} />
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {task.title}
+          </Text>
+        </View>
+        <View style={styles.cardBottom}>
+          <StatusDot status={task.status} theme={theme} />
+          <Text style={styles.cardStatus}>{STATUS_LABELS[task.status]}</Text>
+          {task.agentIds.length > 0 ? (
+            <Text style={styles.cardAgentCount}>Agent {task.agentIds.length}</Text>
           ) : null}
-        </>
-      )}
-    </Pressable>
+          {deploymentBadge ? <Text style={styles.cardDeployMark}>{deploymentBadge}</Text> : null}
+          {task.syncToZentao ? <Text style={styles.cardZentaoMark}>Z</Text> : null}
+        </View>
+      </Pressable>
+      <View style={styles.cardActions}>
+        <Pressable onPress={handleCreateAgent} style={styles.cardActionButton}>
+          <Bot size={12} color={theme.colors.foregroundMuted} />
+          <Text style={styles.cardActionText}>创建Agent</Text>
+        </Pressable>
+        <Pressable onPress={handleToggleMenu} style={styles.cardActionButton}>
+          <MoreHorizontal size={12} color={theme.colors.foregroundMuted} />
+          <Text style={styles.cardActionText}>更多</Text>
+        </Pressable>
+      </View>
+      {isMenuOpen ? (
+        <View style={styles.cardMenu}>
+          {STATUS_COLUMNS.map((status) => (
+            <Pressable
+              key={status}
+              // oxlint-disable-next-line react-perf/jsx-no-new-function-as-prop
+              onPress={() => {
+                onStatusChange(task.id, status);
+                setIsMenuOpen(false);
+              }}
+              style={styles.cardMenuItem}
+            >
+              <StatusDot status={status} theme={theme} />
+              <Text style={styles.cardMenuItemText}>{STATUS_LABELS[status]}</Text>
+            </Pressable>
+          ))}
+          <View style={styles.cardMenuDivider} />
+          <Pressable onPress={handleArchive} style={styles.cardMenuItem}>
+            <Archive size={12} color={theme.colors.foregroundMuted} />
+            <Text style={styles.cardMenuItemText}>归档</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -671,10 +783,13 @@ const styles = StyleSheet.create((theme) => ({
   typeCards: {
     gap: theme.spacing[2],
   },
-  card: {
+  cardOuter: {
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
+    gap: theme.spacing[2],
+  },
+  card: {
     padding: theme.spacing[3],
     gap: theme.spacing[2],
   },
@@ -807,9 +922,8 @@ const styles = StyleSheet.create((theme) => ({
   cardActions: {
     flexDirection: "row",
     gap: theme.spacing[2],
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    paddingTop: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
   },
   cardActionButton: {
     flexDirection: "row",
@@ -821,5 +935,31 @@ const styles = StyleSheet.create((theme) => ({
   cardActionText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+  },
+  cardMenu: {
+    position: "relative",
+    backgroundColor: theme.colors.surface2,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing[1],
+    gap: theme.spacing[1],
+    marginTop: theme.spacing[1],
+  },
+  cardMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+  },
+  cardMenuItemText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  cardMenuDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginVertical: theme.spacing[1],
   },
 }));

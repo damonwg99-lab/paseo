@@ -238,6 +238,7 @@ export const PersistedConfigSchema = z
           .strict()
           .optional(),
         auth: DaemonAuthSchema.optional(),
+        restartOnCrash: z.boolean().optional(),
       })
       .strict()
       .transform(({ allowedHosts, ...daemon }) => {

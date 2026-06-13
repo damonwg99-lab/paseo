@@ -24,6 +24,7 @@ export interface SidebarWorkspaceEntry {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  gitRemoteUrl?: string | null;
 }
 
 export interface SidebarProjectEntry {

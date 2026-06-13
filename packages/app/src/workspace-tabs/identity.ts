@@ -28,6 +28,9 @@ export function normalizeWorkspaceTabTarget(
   if (value.kind === "create_project") {
     return { kind: "create_project" } as WorkspaceTabTarget;
   }
+  if (value.kind === "project_list") {
+    return { kind: "project_list" } as WorkspaceTabTarget;
+  }
   return null;
 }
 
@@ -90,6 +93,9 @@ export function workspaceTabTargetsEqual(
       (right as Record<string, string>)[singleIdKey]
     );
   }
+  if (left.kind === "create_project" || left.kind === "project_list") {
+    return true;
+  }
   return false;
 }
 
@@ -140,6 +146,7 @@ const TAB_ID_PREFIXES: Record<string, string> = {
   task_activity: "task_activity",
   archived_tasks: "archived_tasks",
   project_settings: "project_settings",
+  project_list: "project_list",
 };
 
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
@@ -149,6 +156,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   const prefix = TAB_ID_PREFIXES[target.kind];
   if (target.kind === "create_project") {
     return `create_project_${Date.now()}`;
+  }
+  if (target.kind === "project_list") {
+    return `project_list`;
   }
   if (prefix) {
     const idKey = SINGLE_ID_KEYS[target.kind] as keyof typeof target;

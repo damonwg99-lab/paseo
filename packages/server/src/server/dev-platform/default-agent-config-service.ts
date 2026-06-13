@@ -34,7 +34,7 @@ function createDefaultConfig(type: DevPlatformTaskType): DefaultAgentConfig {
   return {
     type,
     provider: DEFAULT_PROVIDER_PER_TYPE[type],
-    model: "claude-sonnet-4-6",
+    model: "glm-5.1",
     mode: "default",
     systemPromptTemplate: undefined,
     skillIds: undefined,

@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, Home, MessagesSquare, Settings, X } from "lucide-react-native";
+import { FolderPlus, Home, Settings, X } from "lucide-react-native";
 import {
   type Dispatch,
   memo,
@@ -33,16 +33,16 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
-import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
+import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { useSessionStore } from "@/stores/session-store";
 import {
   type SidebarProjectEntry,
   useSidebarWorkspacesList,
@@ -59,14 +59,14 @@ import { formatConnectionStatus } from "@/utils/daemons";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import {
   buildHostOpenProjectRoute,
+  buildHostCreateProjectRoute,
   buildHostSessionsRoute,
   buildSettingsRoute,
   mapPathnameToServer,
 } from "@/utils/host-routes";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
-import { SidebarWorkspaceList } from "./sidebar-workspace-list";
-import { SidebarDevPlatformTaskList } from "./sidebar-dev-platform-task-list";
+import SidebarDevPlatformContent from "./sidebar-dev-platform-content";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -93,8 +93,6 @@ interface SidebarSharedProps {
   collapsedProjectKeys: SidebarShortcutModel["collapsedProjectKeys"];
   shortcutIndexByWorkspaceKey: SidebarShortcutModel["shortcutIndexByWorkspaceKey"];
   toggleProjectCollapsed: SidebarShortcutModel["toggleProjectCollapsed"];
-  collapsedDevPlatformProjectIds: Set<string>;
-  toggleDevPlatformProjectCollapsed: (projectId: string) => void;
   handleRefresh: () => void;
   handleHostSelect: (nextServerId: string) => void;
   handleOpenProject: () => void;
@@ -119,7 +117,6 @@ interface MobileSidebarProps extends SidebarSharedProps {
 interface DesktopSidebarProps extends SidebarSharedProps {
   insetsTop: number;
   isOpen: boolean;
-  handleViewMore: () => void;
 }
 
 export const LeftSidebar = memo(function LeftSidebar({
@@ -194,17 +191,6 @@ export const LeftSidebar = memo(function LeftSidebar({
   });
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
     useSidebarShortcutModel({ projects, isInitialLoad });
-  const [collapsedDevPlatformProjectIds, setCollapsedDevPlatformProjectIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const toggleDevPlatformProjectCollapsed = useCallback((projectId: string) => {
-    setCollapsedDevPlatformProjectIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  }, []);
 
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
@@ -219,16 +205,38 @@ export const LeftSidebar = memo(function LeftSidebar({
     }
   }, [isRevalidating, isManualRefresh]);
 
-  const openProjectPicker = useOpenProjectPicker(activeServerId);
-
   const handleOpenProjectMobile = useCallback(() => {
     showMobileAgent();
-    void openProjectPicker();
-  }, [showMobileAgent, openProjectPicker]);
+    if (!activeServerId) return;
+    const sessions = useSessionStore.getState().sessions;
+    const session = sessions[activeServerId];
+    const firstWorkspace = session?.workspaces.values().next().value;
+    if (firstWorkspace) {
+      navigateToPreparedWorkspaceTab({
+        serverId: activeServerId,
+        workspaceId: firstWorkspace.id,
+        target: { kind: "create_project" },
+      });
+    } else {
+      router.push(buildHostCreateProjectRoute(activeServerId));
+    }
+  }, [showMobileAgent, activeServerId]);
 
   const handleOpenProjectDesktop = useCallback(() => {
-    void openProjectPicker();
-  }, [openProjectPicker]);
+    if (!activeServerId) return;
+    const sessions = useSessionStore.getState().sessions;
+    const session = sessions[activeServerId];
+    const firstWorkspace = session?.workspaces.values().next().value;
+    if (firstWorkspace) {
+      navigateToPreparedWorkspaceTab({
+        serverId: activeServerId,
+        workspaceId: firstWorkspace.id,
+        target: { kind: "create_project" },
+      });
+    } else {
+      router.push(buildHostCreateProjectRoute(activeServerId));
+    }
+  }, [activeServerId]);
 
   const handleSettingsMobile = useCallback(() => {
     showMobileAgent();
@@ -285,8 +293,6 @@ export const LeftSidebar = memo(function LeftSidebar({
     collapsedProjectKeys,
     shortcutIndexByWorkspaceKey,
     toggleProjectCollapsed,
-    collapsedDevPlatformProjectIds,
-    toggleDevPlatformProjectCollapsed,
     handleRefresh,
     handleHostSelect,
     renderHostOption,
@@ -316,7 +322,6 @@ export const LeftSidebar = memo(function LeftSidebar({
       handleOpenProject={handleOpenProjectDesktop}
       handleHome={handleHomeDesktop}
       handleSettings={handleSettingsDesktop}
-      handleViewMore={handleViewMoreNavigate}
     />
   );
 });
@@ -530,16 +535,14 @@ function MobileSidebar({
   hostTriggerRef,
   isHostPickerOpen,
   setIsHostPickerOpen,
-  projects,
+  projects: _projects,
   isInitialLoad,
-  isRevalidating,
-  isManualRefresh,
-  collapsedProjectKeys,
-  shortcutIndexByWorkspaceKey,
-  toggleProjectCollapsed,
-  collapsedDevPlatformProjectIds,
-  toggleDevPlatformProjectCollapsed,
-  handleRefresh,
+  isRevalidating: _isRevalidating,
+  isManualRefresh: _isManualRefresh,
+  collapsedProjectKeys: _collapsedProjectKeys,
+  shortcutIndexByWorkspaceKey: _shortcutIndexByWorkspaceKey,
+  toggleProjectCollapsed: _toggleProjectCollapsed,
+  handleRefresh: _handleRefresh,
   handleHostSelect,
   renderHostOption,
   handleOpenProject,
@@ -549,10 +552,11 @@ function MobileSidebar({
   insetsBottom,
   isOpen,
   closeToAgent,
-  handleViewMoreNavigate,
+  handleViewMoreNavigate: _handleViewMoreNavigate,
 }: MobileSidebarProps) {
   const pathname = usePathname();
-  const isSessionsActive = pathname.includes("/sessions");
+  const _isSessionsActive = pathname.includes("/sessions");
+  void _isSessionsActive;
   const {
     translateX,
     backdropOpacity,
@@ -570,27 +574,6 @@ function MobileSidebar({
     gestureAnimatingRef.current = true;
     closeToAgent();
   }, [closeToAgent, gestureAnimatingRef]);
-
-  const handleViewMore = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
-    translateX.value = -windowWidth;
-    backdropOpacity.value = 0;
-    closeToAgent();
-    handleViewMoreNavigate();
-  }, [
-    activeServerId,
-    backdropOpacity,
-    closeToAgent,
-    handleViewMoreNavigate,
-    translateX,
-    windowWidth,
-  ]);
-
-  const handleWorkspacePress = useCallback(() => {
-    closeToAgent();
-  }, [closeToAgent]);
 
   const closeGesture = useMemo(
     () =>
@@ -716,13 +699,6 @@ function MobileSidebar({
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
         <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
           <View style={styles.sidebarContent} pointerEvents="auto">
-            <SidebarHeaderRow
-              icon={MessagesSquare}
-              label="Sessions"
-              onPress={handleViewMore}
-              isActive={isSessionsActive}
-              testID="sidebar-sessions"
-            />
             <Pressable
               style={styles.mobileCloseButton}
               onPress={closeToAgent}
@@ -746,25 +722,8 @@ function MobileSidebar({
             {isInitialLoad ? (
               <SidebarAgentListSkeleton />
             ) : (
-              <SidebarWorkspaceList
-                serverId={activeServerId}
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                projects={projects}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={handleWorkspacePress}
-                onAddProject={handleOpenProject}
-                parentGestureRef={closeGestureRef}
-              />
+              <SidebarDevPlatformContent serverId={activeServerId} />
             )}
-
-            <SidebarDevPlatformTaskList
-              serverId={activeServerId}
-              collapsedProjectIds={collapsedDevPlatformProjectIds}
-              onToggleProjectCollapsed={toggleDevPlatformProjectCollapsed}
-            />
 
             <SidebarFooter
               theme={theme}
@@ -797,16 +756,14 @@ function DesktopSidebar({
   hostTriggerRef,
   isHostPickerOpen,
   setIsHostPickerOpen,
-  projects,
+  projects: _projects,
   isInitialLoad,
-  isRevalidating,
-  isManualRefresh,
-  collapsedProjectKeys,
-  shortcutIndexByWorkspaceKey,
-  toggleProjectCollapsed,
-  collapsedDevPlatformProjectIds,
-  toggleDevPlatformProjectCollapsed,
-  handleRefresh,
+  isRevalidating: _isRevalidating,
+  isManualRefresh: _isManualRefresh,
+  collapsedProjectKeys: _collapsedProjectKeys,
+  shortcutIndexByWorkspaceKey: _shortcutIndexByWorkspaceKey,
+  toggleProjectCollapsed: _toggleProjectCollapsed,
+  handleRefresh: _handleRefresh,
   handleHostSelect,
   renderHostOption,
   handleOpenProject,
@@ -814,10 +771,10 @@ function DesktopSidebar({
   handleSettings,
   insetsTop,
   isOpen,
-  handleViewMore,
 }: DesktopSidebarProps) {
   const pathname = usePathname();
-  const isSessionsActive = pathname.includes("/sessions");
+  const _isSessionsActive = pathname.includes("/sessions");
+  void _isSessionsActive;
   const padding = useWindowControlsPadding("sidebar");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -886,35 +843,13 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={paddingTopSpacerStyle} /> : null}
-          <SidebarHeaderRow
-            icon={MessagesSquare}
-            label="Sessions"
-            onPress={handleViewMore}
-            isActive={isSessionsActive}
-            testID="sidebar-sessions"
-          />
         </View>
 
         {isInitialLoad ? (
           <SidebarAgentListSkeleton />
         ) : (
-          <SidebarWorkspaceList
-            serverId={activeServerId}
-            collapsedProjectKeys={collapsedProjectKeys}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-            projects={projects}
-            isRefreshing={isManualRefresh && isRevalidating}
-            onRefresh={handleRefresh}
-            onAddProject={handleOpenProject}
-          />
+          <SidebarDevPlatformContent serverId={activeServerId} />
         )}
-
-        <SidebarDevPlatformTaskList
-          serverId={activeServerId}
-          collapsedProjectIds={collapsedDevPlatformProjectIds}
-          onToggleProjectCollapsed={toggleDevPlatformProjectCollapsed}
-        />
 
         <SidebarCalloutSlot />
 

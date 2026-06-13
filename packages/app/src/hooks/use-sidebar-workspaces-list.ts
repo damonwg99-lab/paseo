@@ -53,6 +53,7 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    gitRemoteUrl: input.workspace.gitRuntime?.remoteUrl ?? null,
   };
 }
 

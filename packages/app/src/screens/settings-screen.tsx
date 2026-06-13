@@ -100,6 +100,9 @@ import {
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useDevPlatformStore } from "@/stores/dev-platform-store";
+import { TASK_TYPE_LABELS } from "@/constants/dev-platform-icons";
+import type { DevPlatformTaskType } from "@getpaseo/protocol/dev-platform/types";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
@@ -133,6 +136,7 @@ interface SidebarSectionItem {
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", label: "General", icon: Settings },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "agent_config", label: "Agent配置", icon: Boxes },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, desktopOnly: true },
   { id: "integrations", label: "Integrations", icon: Puzzle, desktopOnly: true },
   { id: "permissions", label: "Permissions", icon: Shield, desktopOnly: true },
@@ -330,6 +334,96 @@ interface DiagnosticsSectionProps {
   isPlaybackTestRunning: boolean;
   playbackTestResult: string | null;
   handlePlaybackTest: () => Promise<void>;
+}
+
+const TASK_TYPES: DevPlatformTaskType[] = [
+  "requirement",
+  "design",
+  "development",
+  "bug",
+  "testing",
+  "documentation",
+  "deployment",
+];
+
+function AgentConfigSection() {
+  const { theme } = useUnistyles();
+  const defaultAgentConfigs = useDevPlatformStore((s) => s.defaultAgentConfigs);
+  const fetchDefaultConfigs = useDevPlatformStore((s) => s.fetchDefaultConfigs);
+  const updateDefaultConfig = useDevPlatformStore((s) => s.updateDefaultConfig);
+
+  useEffect(() => {
+    void fetchDefaultConfigs();
+  }, [fetchDefaultConfigs]);
+
+  const handleUpdate = useCallback(
+    async (type: DevPlatformTaskType, field: string, value: string) => {
+      const existing = defaultAgentConfigs.find((c) => c.type === type);
+      const input = {
+        taskType: type,
+        provider: field === "provider" ? value : (existing?.provider ?? "claude"),
+        model: field === "model" ? value : (existing?.model ?? "glm-5.1"),
+        mode: field === "mode" ? value : (existing?.mode ?? "default"),
+      };
+      await updateDefaultConfig(input);
+    },
+    [defaultAgentConfigs, updateDefaultConfig],
+  );
+
+  return (
+    <SettingsSection title="默认Agent配置">
+      <Text style={styles.agentConfigHint}>
+        所有项目共用的默认agent配置。每种任务类型可指定不同的provider、model和mode。
+      </Text>
+      {TASK_TYPES.map((type) => {
+        const config = defaultAgentConfigs.find((c) => c.type === type);
+        return (
+          <View key={type} style={settingsStyles.card}>
+            <Text style={styles.agentConfigTypeLabel}>{TASK_TYPE_LABELS[type]}</Text>
+            <View style={ROW_WITH_BORDER_STYLE}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Provider</Text>
+              </View>
+              <TextInput
+                style={styles.agentConfigInput}
+                value={config?.provider ?? "claude"}
+                // oxlint-disable-next-line react-perf/jsx-no-new-function-as-prop
+                onChangeText={(v) => void handleUpdate(type, "provider", v)}
+                placeholder="claude"
+                placeholderTextColor={theme.colors.foregroundMuted}
+              />
+            </View>
+            <View style={ROW_WITH_BORDER_STYLE}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Model</Text>
+              </View>
+              <TextInput
+                style={styles.agentConfigInput}
+                value={config?.model ?? "glm-5.1"}
+                // oxlint-disable-next-line react-perf/jsx-no-new-function-as-prop
+                onChangeText={(v) => void handleUpdate(type, "model", v)}
+                placeholder="glm-5.1"
+                placeholderTextColor={theme.colors.foregroundMuted}
+              />
+            </View>
+            <View style={styles.agentConfigLastRow}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Mode</Text>
+              </View>
+              <TextInput
+                style={styles.agentConfigInput}
+                value={config?.mode ?? "default"}
+                // oxlint-disable-next-line react-perf/jsx-no-new-function-as-prop
+                onChangeText={(v) => void handleUpdate(type, "mode", v)}
+                placeholder="default"
+                placeholderTextColor={theme.colors.foregroundMuted}
+              />
+            </View>
+          </View>
+        );
+      })}
+    </SettingsSection>
+  );
 }
 
 function DiagnosticsSection({
@@ -1332,6 +1426,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           );
         case "appearance":
           return <AppearanceSection />;
+        case "agent_config":
+          return <AgentConfigSection />;
         case "shortcuts":
           return isDesktopApp ? <KeyboardShortcutsSection /> : null;
         case "integrations":
@@ -1570,6 +1666,37 @@ const styles = StyleSheet.create((theme) => ({
   placeholderText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  agentConfigHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginBottom: theme.spacing[3],
+  },
+  agentConfigTypeLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
+    paddingBottom: theme.spacing[2],
+  },
+  agentConfigInput: {
+    width: 180,
+    minHeight: 36,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "right",
+  },
+  agentConfigLastRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
   },
 }));
 
