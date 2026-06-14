@@ -4,10 +4,51 @@ import { z } from "zod";
 // DevPlatformProject — project/workspace entity
 // ---------------------------------------------------------------------------
 
+/**
+ * DevPlatformWorktree — a git worktree entry under a git repo.
+ * Worktrees allow working on multiple branches of the same repo simultaneously.
+ */
+export const DevPlatformWorktreeSchema = z.object({
+  /** Absolute path to the worktree directory on disk */
+  path: z.string().trim().min(1),
+  /** Current branch name checked out in this worktree */
+  branch: z.string().trim().min(1),
+});
+export type DevPlatformWorktree = z.infer<typeof DevPlatformWorktreeSchema>;
+
+/**
+ * DevPlatformGitRepo — a git repository entry within a dev-platform project.
+ *
+ * Architecture: In dev-platform mode, one project = one workspace (at rootDirectory).
+ * Git repos are NOT separate workspaces — they are sub-entries within the project.
+ * Clicking a git repo in the sidebar only updates the right-side file explorer,
+ * it does NOT change the workspace route or middle-area tabs.
+ *
+ * For single-repo projects, use relativePath: "." (the rootDirectory itself is a git repo).
+ * For multi-repo (microservices) projects, each child git repo gets an entry with its
+ * relative path from rootDirectory (e.g. "frontend-web", "services/user-service").
+ */
 export const DevPlatformGitRepoSchema = z.object({
+  /** Git remote URL (optional — may be empty for local-only repos) */
   url: z.string().trim().min(1),
-  workspaceId: z.string().optional(),
+  /**
+   * Path relative to project rootDirectory.
+   * Use "." when rootDirectory itself is a git repo (single-repo project).
+   * Use e.g. "frontend-web" for child repos in multi-repo projects.
+   * Default "." handles migration from old schema where this field was absent.
+   */
+  relativePath: z.string().trim().min(1).default("."),
+  /** Display label (defaults to directory basename if omitted) */
   label: z.string().optional(),
+  /**
+   * Git worktrees under this repo — allows parallel branch work.
+   * Each worktree is shown as a sub-entry under the repo row in the sidebar.
+   */
+  worktrees: z.array(DevPlatformWorktreeSchema).default([]),
+  // COMPAT(workspaceId): added in Phase 1, replaced by relativePath in Phase 2.
+  // Keep optional for backward compat with existing persisted data. Remove when floor >= Phase 2.
+  /** @deprecated Use relativePath instead. Retained for backward compat only. */
+  workspaceId: z.string().optional(),
 });
 export type DevPlatformGitRepo = z.infer<typeof DevPlatformGitRepoSchema>;
 
@@ -25,9 +66,27 @@ export type CicdConfig = z.infer<typeof CicdConfigSchema>;
 export const DevPlatformProjectSchema = z.object({
   id: z.string(),
   name: z.string().trim().min(1),
+  /**
+   * Project root directory — this is the single Paseo workspace for the entire project.
+   * In dev-platform mode, one project = one workspace at rootDirectory.
+   * All tabs, agents, and project-level state live under this workspace.
+   * Child git repos (in gitRepos[]) are NOT separate workspaces.
+   */
   rootDirectory: z.string().trim().min(1),
   description: z.string().optional(),
+  /**
+   * Git repositories within this project.
+   * For single-repo projects: contains one entry with relativePath: "."
+   * For multi-repo (microservices) projects: contains one entry per child git repo.
+   * Auto-detected on project creation via recursive scan of rootDirectory.
+   */
   gitRepos: z.array(DevPlatformGitRepoSchema).default([]),
+  /**
+   * Paseo workspace IDs associated with this project.
+   * In dev-platform mode, typically contains one entry (the rootDirectory workspace).
+   * Used for mapping workspaceId → projectId in the tab system.
+   */
+  workspaceIds: z.array(z.string()).default([]),
   zentaoProjectId: z.string().optional(),
   uatBranch: z.string().optional(),
   prdBranch: z.string().optional(),
@@ -260,6 +319,8 @@ export interface CreateDevPlatformProjectInput {
   rootDirectory: string;
   description?: string;
   gitRepos?: DevPlatformGitRepo[];
+  /** Paseo workspace IDs to associate. Typically [rootDirectory] for dev-platform projects. */
+  workspaceIds?: string[];
   zentaoProjectId?: string;
   uatBranch?: string;
   prdBranch?: string;
@@ -271,6 +332,8 @@ export interface UpdateDevPlatformProjectInput {
   name?: string;
   description?: string;
   gitRepos?: DevPlatformGitRepo[];
+  /** Update associated workspace IDs. */
+  workspaceIds?: string[];
   zentaoProjectId?: string;
   uatBranch?: string;
   prdBranch?: string;

@@ -116,6 +116,8 @@ import {
   DevDefaultConfigListResponseSchema,
   DevDefaultConfigUpdateResponseSchema,
   DevProjectBranchStatusListResponseSchema,
+  DevRepoStatusResponseSchema,
+  DevRepoStatusAllResponseSchema,
 } from "@getpaseo/protocol/dev-platform/rpc-schemas";
 import {
   asUint8Array,
@@ -4594,6 +4596,30 @@ export class DaemonClient {
       requestId: options.requestId ?? crypto.randomUUID(),
       message: { type: "dev.project.branch_status.list", projectId: options.projectId },
       responseType: "dev.project.branch_status.list/response",
+      timeout: 10000,
+    });
+  }
+
+  async devRepoStatus(options: {
+    requestId?: string;
+    repoPath: string;
+  }): Promise<z.infer<typeof DevRepoStatusResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.repo.status", repoPath: options.repoPath },
+      responseType: "dev.repo.status/response",
+      timeout: 10000,
+    });
+  }
+
+  async devRepoStatusAll(options: {
+    requestId?: string;
+    projectId: string;
+  }): Promise<z.infer<typeof DevRepoStatusAllResponseSchema>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId ?? crypto.randomUUID(),
+      message: { type: "dev.repo.status_all", projectId: options.projectId },
+      responseType: "dev.repo.status_all/response",
       timeout: 10000,
     });
   }

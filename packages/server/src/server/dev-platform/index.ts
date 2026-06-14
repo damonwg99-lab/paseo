@@ -50,5 +50,6 @@ export function createDevPlatformServices(
     contextService,
     defaultAgentConfigService,
     zentaoConfigService,
+    logger,
   };
 }

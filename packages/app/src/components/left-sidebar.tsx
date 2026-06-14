@@ -75,6 +75,9 @@ import {
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { useHasDevPlatformFeature } from "@/hooks/use-has-dev-platform-feature";
+import DevPlatformSidebar from "@/components/sidebar/dev-platform-sidebar";
+import DesktopDevPlatformSidebar from "@/components/sidebar/desktop-dev-platform-sidebar";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -145,6 +148,8 @@ export const LeftSidebar = memo(function LeftSidebar({
   selectedAgentId: _selectedAgentId,
 }: LeftSidebarProps) {
   void _selectedAgentId;
+
+  const hasDevPlatform = useHasDevPlatformFeature();
 
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -300,6 +305,16 @@ export const LeftSidebar = memo(function LeftSidebar({
     [t],
   );
 
+  // Dev-platform sidebar: on compact/mobile, render directly (no desktop shell).
+  // On desktop, use DesktopDevPlatformSidebar which provides its own shell.
+  if (hasDevPlatform && isCompactLayout) {
+    return <DevPlatformSidebar />;
+  }
+
+  if (hasDevPlatform) {
+    return <DesktopDevPlatformSidebar />;
+  }
+
   const sharedProps = {
     theme,
     activeServerId,
@@ -362,7 +377,7 @@ interface HostPickerTriggerProps {
   activeHostLabel: string;
 }
 
-function HostPickerTrigger({
+export function HostPickerTrigger({
   triggerRef,
   setIsHostPickerOpen,
   hostOptionsEmpty,
@@ -419,7 +434,7 @@ function HostSwitchOption({
   );
 }
 
-function FooterIconButton({
+export function FooterIconButton({
   onPress,
   testID,
   accessibilityLabel,
@@ -483,7 +498,7 @@ function HeaderIconTooltipContent({
   );
 }
 
-function SidebarFooter({
+export function SidebarFooter({
   theme,
   activeServerId,
   activeHostLabel,

@@ -100,6 +100,8 @@ import {
   DevZentaoSyncStatusRequestSchema,
   DevZentaoSyncConflictListRequestSchema,
   DevZentaoSyncConflictResolveRequestSchema,
+  DevRepoStatusRequestSchema,
+  DevRepoStatusAllRequestSchema,
   DevProjectCreateResponseSchema,
   DevProjectListResponseSchema,
   DevProjectInspectResponseSchema,
@@ -147,8 +149,11 @@ import {
   DevZentaoSyncStatusResponseSchema,
   DevZentaoSyncConflictListResponseSchema,
   DevZentaoSyncConflictResolveResponseSchema,
+  DevRepoStatusResponseSchema,
+  DevRepoStatusAllResponseSchema,
   DevZentaoSyncUpdateMessageSchema,
   DevCicdBuildUpdateMessageSchema,
+  DevRepoStatusUpdateMessageSchema,
 } from "@getpaseo/protocol/dev-platform/rpc-schemas";
 import {
   PaseoConfigRawSchema,
@@ -2143,6 +2148,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DevZentaoSyncStatusRequestSchema,
   DevZentaoSyncConflictListRequestSchema,
   DevZentaoSyncConflictResolveRequestSchema,
+  DevRepoStatusRequestSchema,
+  DevRepoStatusAllRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -2319,6 +2326,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(dev_platform): added for dev-platform secondary development.
+        dev_platform: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4124,8 +4133,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DevZentaoSyncStatusResponseSchema,
   DevZentaoSyncConflictListResponseSchema,
   DevZentaoSyncConflictResolveResponseSchema,
+  DevRepoStatusResponseSchema,
+  DevRepoStatusAllResponseSchema,
   DevZentaoSyncUpdateMessageSchema,
   DevCicdBuildUpdateMessageSchema,
+  DevRepoStatusUpdateMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;

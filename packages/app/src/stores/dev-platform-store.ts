@@ -11,7 +11,7 @@ import type {
   CicdConfig,
   DefaultAgentConfig,
 } from "@getpaseo/protocol/dev-platform/types";
-import type { BranchStatusEntry } from "@getpaseo/protocol/dev-platform/rpc-schemas";
+import type { BranchStatusEntry, GitRepoStatus } from "@getpaseo/protocol/dev-platform/rpc-schemas";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -20,6 +20,7 @@ interface DevPlatformState {
   activeProjectId: string | null;
   tasksByProject: Record<string, DevPlatformTask[]>;
   branchStatusByProject: Record<string, BranchStatusEntry[]>;
+  repoStatusesByProject: Record<string, Map<string, GitRepoStatus>>;
   defaultAgentConfigs: DefaultAgentConfig[];
   loading: boolean;
   error: string | null;
@@ -28,6 +29,7 @@ interface DevPlatformState {
   fetchProjects: () => Promise<void>;
   fetchTasks: (projectId: string) => Promise<void>;
   fetchBranchStatus: (projectId: string) => Promise<void>;
+  fetchRepoStatuses: (projectId: string) => Promise<void>;
   fetchDefaultConfigs: () => Promise<void>;
   createProject: (input: {
     name: string;
@@ -118,6 +120,7 @@ export const useDevPlatformStore = create<DevPlatformState>((set, get) => ({
   activeProjectId: null,
   tasksByProject: {},
   branchStatusByProject: {},
+  repoStatusesByProject: {},
   defaultAgentConfigs: [],
   loading: false,
   error: null,
@@ -169,6 +172,26 @@ export const useDevPlatformStore = create<DevPlatformState>((set, get) => ({
         branchStatusByProject: {
           ...state.branchStatusByProject,
           [projectId]: payload.branches ?? [],
+        },
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  fetchRepoStatuses: async (projectId: string) => {
+    try {
+      const payload = await getClient().devRepoStatusAll({ projectId });
+      const statusMap = new Map<string, GitRepoStatus>();
+      for (const entry of payload.statuses ?? []) {
+        if (entry.status) {
+          statusMap.set(entry.repoPath, entry.status);
+        }
+      }
+      set((state) => ({
+        repoStatusesByProject: {
+          ...state.repoStatusesByProject,
+          [projectId]: statusMap,
         },
       }));
     } catch (error) {

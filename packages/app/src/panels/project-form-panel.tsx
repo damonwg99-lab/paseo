@@ -57,7 +57,11 @@ function ProjectFormPanel({ mode, projectId, serverId }: ProjectFormPanelProps) 
   const handleAddRepo = useCallback(() => {
     const url = repoUrl.trim();
     if (!url) return;
-    setGitRepos((prev) => [...prev, { url, label: repoName.trim() || undefined }]);
+    const label = repoName.trim() || undefined;
+    // For manually added repos, derive relativePath from label or default to "."
+    // (auto-detected repos get their relativePath from the scanner)
+    const relativePath = label ?? ".";
+    setGitRepos((prev) => [...prev, { url, relativePath, worktrees: [], label }]);
     setRepoUrl("");
     setRepoName("");
   }, [repoUrl, repoName]);

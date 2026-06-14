@@ -75,6 +75,7 @@ function SidebarProjectSwitcher({ serverId }: SidebarProjectSwitcherProps) {
         title="切换项目"
         searchPlaceholder="搜索项目..."
         desktopMinWidth={280}
+        desktopPlacement="bottom-start"
         open={isOpen}
         onOpenChange={setIsOpen}
         anchorRef={triggerRef}

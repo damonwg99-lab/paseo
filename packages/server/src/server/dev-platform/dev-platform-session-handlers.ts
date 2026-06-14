@@ -4,6 +4,8 @@ import type { DevPlatformTaskService } from "./task-service.js";
 import type { DevPlatformContextService } from "./context-service.js";
 import type { DefaultAgentConfigService } from "./default-agent-config-service.js";
 import type { ZentaoConfigService } from "./zentao-config-service.js";
+import { getGitRepoStatus } from "./git-repo-monitor.js";
+import type { Logger } from "pino";
 import type {
   CreateDevPlatformProjectInput,
   UpdateDevPlatformProjectInput,
@@ -17,6 +19,7 @@ export interface DevPlatformServices {
   contextService: DevPlatformContextService;
   defaultAgentConfigService: DefaultAgentConfigService;
   zentaoConfigService: ZentaoConfigService;
+  logger: Logger;
 }
 
 export function dispatchDevPlatformMessage(
@@ -29,7 +32,8 @@ export function dispatchDevPlatformMessage(
     dispatchDevTaskMessage(msg, services, emit) ??
     dispatchDevContextMessage(msg, services, emit) ??
     dispatchDevDefaultConfigMessage(msg, services, emit) ??
-    dispatchDevZentaoMessage(msg, services, emit)
+    dispatchDevZentaoMessage(msg, services, emit) ??
+    dispatchDevRepoMessage(msg, services, emit)
   );
 }
 
@@ -572,6 +576,85 @@ async function handleDevDefaultConfigUpdate(
     });
   } catch (error) {
     emitError(msg, "dev.default_config.update/response", String(error), emit);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// dev.repo.* handlers
+// ---------------------------------------------------------------------------
+
+function dispatchDevRepoMessage(
+  msg: SessionInboundMessage,
+  services: DevPlatformServices,
+  emit: (msg: unknown) => void,
+): Promise<void> | undefined {
+  switch (msg.type) {
+    case "dev.repo.status":
+      return handleDevRepoStatus(msg, services, emit);
+    case "dev.repo.status_all":
+      return handleDevRepoStatusAll(msg, services, emit);
+    default:
+      return undefined;
+  }
+}
+
+async function handleDevRepoStatus(
+  msg: SessionInboundMessage & { type: "dev.repo.status" },
+  _services: DevPlatformServices,
+  emit: (msg: unknown) => void,
+): Promise<void> {
+  try {
+    const status = getGitRepoStatus(msg.repoPath);
+    emit({
+      type: "dev.repo.status/response",
+      payload: { requestId: msg.requestId, status, error: null },
+    });
+  } catch (error) {
+    emitError(msg, "dev.repo.status/response", String(error), emit);
+  }
+}
+
+async function handleDevRepoStatusAll(
+  msg: SessionInboundMessage & { type: "dev.repo.status_all" },
+  services: DevPlatformServices,
+  emit: (msg: unknown) => void,
+): Promise<void> {
+  try {
+    const project = await services.projectService.inspect(msg.projectId);
+    if (!project) {
+      emit({
+        type: "dev.repo.status_all/response",
+        payload: { requestId: msg.requestId, statuses: [], error: "Project not found" },
+      });
+      return;
+    }
+
+    const statuses: { repoPath: string; status: ReturnType<typeof getGitRepoStatus> }[] = [];
+
+    // Get status for rootDirectory itself (if it's a git repo)
+    const rootStatus = getGitRepoStatus(project.rootDirectory);
+    if (rootStatus) {
+      statuses.push({ repoPath: project.rootDirectory, status: rootStatus });
+    }
+
+    // Get status for each git repo
+    for (const repo of project.gitRepos) {
+      const repoPath =
+        repo.relativePath === "."
+          ? project.rootDirectory
+          : `${project.rootDirectory}/${repo.relativePath}`;
+      const status = getGitRepoStatus(repoPath);
+      if (status) {
+        statuses.push({ repoPath, status });
+      }
+    }
+
+    emit({
+      type: "dev.repo.status_all/response",
+      payload: { requestId: msg.requestId, statuses, error: null },
+    });
+  } catch (error) {
+    emitError(msg, "dev.repo.status_all/response", String(error), emit);
   }
 }
 

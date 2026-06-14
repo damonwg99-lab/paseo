@@ -69,6 +69,7 @@ import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import { useToast } from "@/contexts/toast-context";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
+import { useDevPlatformExplorerRoot } from "@/hooks/use-dev-platform-explorer-root";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -1781,6 +1782,7 @@ function WorkspaceScreenContent({
   );
   const { workspaceDirectory, isMissingWorkspaceExecutionAuthority } =
     resolveWorkspaceAuthorityState(workspaceAuthority, workspaceDescriptor);
+  const explorerRoot = useDevPlatformExplorerRoot(workspaceDirectory);
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
   const openImportSheet = useCallback(() => {
@@ -3757,11 +3759,11 @@ function WorkspaceScreenContent({
 
               <FloatingPanelPortalHost name={workspaceFloatingPanelPortalHostName} />
 
-              {showExplorerSidebar && workspaceDirectory ? (
+              {showExplorerSidebar && explorerRoot ? (
                 <ExplorerSidebar
                   serverId={normalizedServerId}
                   workspaceId={normalizedWorkspaceId}
-                  workspaceRoot={workspaceDirectory}
+                  workspaceRoot={explorerRoot}
                   isGit={isGitCheckout}
                   onOpenFile={handleOpenFileFromExplorer}
                 />

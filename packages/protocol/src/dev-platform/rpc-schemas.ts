@@ -29,6 +29,8 @@ export const DevProjectCreateRequestSchema = z.object({
   rootDirectory: z.string().trim().min(1),
   description: z.string().optional(),
   gitRepos: z.array(DevPlatformGitRepoSchema).optional(),
+  /** Paseo workspace IDs to associate. Typically [rootDirectory] for dev-platform projects. */
+  workspaceIds: z.array(z.string()).optional(),
   zentaoProjectId: z.string().optional(),
   uatBranch: z.string().optional(),
   prdBranch: z.string().optional(),
@@ -80,6 +82,8 @@ export const DevProjectUpdateRequestSchema = z.object({
   name: z.string().trim().min(1).optional(),
   description: z.string().optional(),
   gitRepos: z.array(DevPlatformGitRepoSchema).optional(),
+  /** Update associated workspace IDs. */
+  workspaceIds: z.array(z.string()).optional(),
   zentaoProjectId: z.string().optional(),
   uatBranch: z.string().optional(),
   prdBranch: z.string().optional(),
@@ -934,5 +938,69 @@ export const DevCicdBuildUpdateMessageSchema = z.object({
     buildStatus: DevPlatformBuildStatusSchema,
     buildNumber: z.number().int().optional(),
     buildUrl: z.string().optional(),
+  }),
+});
+
+// ---------------------------------------------------------------------------
+// dev.repo.* — Git repository status (sidebar display)
+// ---------------------------------------------------------------------------
+
+export const GitRepoStatusSchema = z.object({
+  repoPath: z.string(),
+  branch: z.string().nullable(),
+  headCommit: z.string().nullable(),
+  aheadBy: z.number().int().nonnegative(),
+  behindBy: z.number().int().nonnegative(),
+  isDirty: z.boolean(),
+  untrackedFiles: z.number().int().nonnegative(),
+  modifiedFiles: z.number().int().nonnegative(),
+  stagedFiles: z.number().int().nonnegative(),
+  upstream: z.string().nullable(),
+  checkedAt: z.string(),
+});
+export type GitRepoStatus = z.infer<typeof GitRepoStatusSchema>;
+
+export const DevRepoStatusRequestSchema = z.object({
+  type: z.literal("dev.repo.status"),
+  requestId: z.string(),
+  /** Absolute path to the git repo working directory */
+  repoPath: z.string().trim().min(1),
+});
+
+export const DevRepoStatusResponseSchema = z.object({
+  type: z.literal("dev.repo.status/response"),
+  payload: z.object({
+    requestId: z.string(),
+    status: GitRepoStatusSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+// dev.repo.status_all — get status for all repos in a project at once
+
+export const DevRepoStatusAllRequestSchema = z.object({
+  type: z.literal("dev.repo.status_all"),
+  requestId: z.string(),
+  projectId: z.string(),
+});
+
+export const DevRepoStatusAllResponseSchema = z.object({
+  type: z.literal("dev.repo.status_all/response"),
+  payload: z.object({
+    requestId: z.string(),
+    /** Map of repoPath → GitRepoStatus */
+    statuses: z.array(z.object({ repoPath: z.string(), status: GitRepoStatusSchema })),
+    error: z.string().nullable(),
+  }),
+});
+
+// dev.repo.status_update — push event for sidebar live updates
+
+export const DevRepoStatusUpdateMessageSchema = z.object({
+  type: z.literal("dev.repo.status_update"),
+  payload: z.object({
+    projectId: z.string(),
+    repoPath: z.string(),
+    status: GitRepoStatusSchema,
   }),
 });

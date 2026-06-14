@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { readdirSync, existsSync } from "node:fs";
-import { execSync } from "node:child_process";
 import type { Logger } from "pino";
 import type {
   CreateDevPlatformProjectInput,
@@ -21,56 +20,7 @@ import {
   createPersistedWorkspaceRecord,
 } from "../workspace-registry.js";
 import type { PersistedProjectRecord } from "../workspace-registry.js";
-
-function scanGitRepos(rootDirectory: string, logger: Logger): DevPlatformGitRepo[] {
-  const repos: DevPlatformGitRepo[] = [];
-  if (!existsSync(rootDirectory)) {
-    logger.warn("rootDirectory does not exist: %s", rootDirectory);
-    return repos;
-  }
-
-  // Check if root itself is a git repo
-  if (existsSync(join(rootDirectory, ".git"))) {
-    const remoteUrl = getGitRemoteUrl(rootDirectory);
-    if (remoteUrl) {
-      repos.push({ url: remoteUrl, label: undefined });
-    }
-  }
-
-  // Scan subdirectories for git repos
-  try {
-    const entries = readdirSync(rootDirectory, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const subDir = join(rootDirectory, entry.name);
-      if (existsSync(join(subDir, ".git"))) {
-        const remoteUrl = getGitRemoteUrl(subDir);
-        if (remoteUrl) {
-          repos.push({ url: remoteUrl, label: entry.name });
-        } else {
-          repos.push({ url: subDir, label: entry.name });
-        }
-      }
-    }
-  } catch (error) {
-    logger.warn("Failed to scan rootDirectory: %s", String(error));
-  }
-
-  return repos;
-}
-
-function getGitRemoteUrl(dir: string): string | null {
-  try {
-    const result = execSync("git remote get-url origin", {
-      cwd: dir,
-      encoding: "utf-8",
-      timeout: 5000,
-    }).trim();
-    return result || null;
-  } catch {
-    return null;
-  }
-}
+import { scanGitRepos, getGitRemoteUrl } from "./repo-scanner.js";
 
 function resolveLocalDirectoriesForRemoteUrls(
   rootDirectory: string,
@@ -164,6 +114,9 @@ export class DevPlatformProjectService {
       rootDirectory: input.rootDirectory,
       description: input.description ?? undefined,
       gitRepos,
+      // In dev-platform mode, one project = one workspace at rootDirectory.
+      // Initialize workspaceIds with the normalized rootDirectory path.
+      workspaceIds: input.workspaceIds ?? [normalizeWorkspaceId(input.rootDirectory)],
       zentaoProjectId: input.zentaoProjectId ?? undefined,
       uatBranch: input.uatBranch ?? undefined,
       prdBranch: input.prdBranch ?? undefined,
